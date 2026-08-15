@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import com.cappielloantonio.tempo.audio.NativeDirectAudioOutputProvider
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.*
@@ -523,6 +524,8 @@ open class BaseMediaService : MediaLibraryService() {
                 updateWidget(player)
             }
 
+
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 Log.d(TAG, "onPlaybackStateChanged")
                 super.onPlaybackStateChanged(playbackState)
@@ -1022,8 +1025,9 @@ open class BaseMediaService : MediaLibraryService() {
             ): AudioSink {
                 return DefaultAudioSink.Builder(context)
                     .setAudioProcessors(arrayOf(ReplayGainUtil.getAudioProcessor()))
-                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableFloatOutput(true)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioOutputProvider(NativeDirectAudioOutputProvider(context))
                     .build()
             }
         }
