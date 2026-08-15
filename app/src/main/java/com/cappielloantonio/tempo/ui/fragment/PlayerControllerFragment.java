@@ -39,6 +39,7 @@ import androidx.navigation.NavController;
 import androidx.navigation.NavOptions;
 import androidx.navigation.fragment.NavHostFragment;
 import androidx.transition.ChangeBounds;
+import androidx.transition.Fade;
 import androidx.transition.Slide;
 import androidx.transition.TransitionManager;
 import androidx.transition.TransitionSet;
@@ -48,9 +49,11 @@ import com.cappielloantonio.tempo.R;
 import com.cappielloantonio.tempo.databinding.InnerFragmentPlayerControllerBinding;
 import com.cappielloantonio.tempo.service.MediaService;
 import com.cappielloantonio.tempo.ui.activity.MainActivity;
+import com.cappielloantonio.tempo.ui.dialog.AudioProcessDialog;
 import com.cappielloantonio.tempo.ui.dialog.PlaybackSpeedDialog;
 import com.cappielloantonio.tempo.ui.dialog.PlaylistChooserDialog;
 import com.cappielloantonio.tempo.ui.dialog.SleepTimerDialog;
+import com.cappielloantonio.tempo.util.AudioOutputTracker;
 import com.cappielloantonio.tempo.util.SleepTimerManager;
 
 import androidx.core.widget.ImageViewCompat;
@@ -91,9 +94,11 @@ public class PlayerControllerFragment extends Fragment {
     private ToggleButton skipSilenceToggleButton;
     private Chip playerMediaExtension;
     private TextView playerMediaBitrate;
+    private TextView playerMediaOutputFormat;
     private ConstraintLayout playerQuickActionView;
     private ImageButton playerOpenQueueButton;
     private ImageButton playerOpenLyricsButton;
+    private ImageButton playerAudioProcessInfo;
     private ImageButton playerTrackInfo;
     private LinearLayout ratingContainer;
     private LinearLayout sleepTimerContainer;
@@ -164,9 +169,11 @@ public class PlayerControllerFragment extends Fragment {
         skipSilenceToggleButton = bind.getRoot().findViewById(R.id.player_skip_silence_toggle_button);
         playerMediaExtension = bind.getRoot().findViewById(R.id.player_media_extension);
         playerMediaBitrate = bind.getRoot().findViewById(R.id.player_media_bitrate);
+        playerMediaOutputFormat = bind.getRoot().findViewById(R.id.player_media_output_format);
         playerQuickActionView = bind.getRoot().findViewById(R.id.player_quick_action_view);
         playerOpenQueueButton = bind.getRoot().findViewById(R.id.player_open_queue_button);
         playerOpenLyricsButton = bind.getRoot().findViewById(R.id.player_open_lyrics_button);
+        playerAudioProcessInfo = bind.getRoot().findViewById(R.id.player_audio_process_info);
         playerTrackInfo = bind.getRoot().findViewById(R.id.player_info_track);
         songRatingBar = bind.getRoot().findViewById(R.id.song_rating_bar);
         ratingContainer = bind.getRoot().findViewById(R.id.rating_container);
@@ -399,6 +406,8 @@ public class PlayerControllerFragment extends Fragment {
 
         if (!isLocal) {
             setMediaFormatFromFileReturnedByServer();
+        } else {
+            updateOutputFormatView();
         }
 
         playerTrackInfo.setOnClickListener(view -> {
@@ -406,11 +415,23 @@ public class PlayerControllerFragment extends Fragment {
             dialog.show(activity.getSupportFragmentManager(), null);
         });
 
-        playerMediaExtension.setOnClickListener(v -> toggleBitrateVisibility());
+        if (playerAudioProcessInfo != null) {
+            playerAudioProcessInfo.setOnClickListener(view -> {
+                AudioProcessDialog dialog = new AudioProcessDialog(mediaMetadata, getBrowser());
+                dialog.show(activity.getSupportFragmentManager(), null);
+            });
+        }
+
+        playerMediaExtension.setOnClickListener(v -> toggleOutputFormatVisibility());
         playerMediaExtension.setOnLongClickListener(v -> toggleQuickActionVisiblity());
 
-        playerMediaBitrate.setOnClickListener(v -> toggleBitrateVisibility());
+        playerMediaBitrate.setOnClickListener(v -> toggleOutputFormatVisibility());
         playerMediaBitrate.setOnLongClickListener(v -> toggleQuickActionVisiblity());
+
+        if (playerMediaOutputFormat != null) {
+            playerMediaOutputFormat.setOnClickListener(v -> toggleOutputFormatVisibility());
+            playerMediaOutputFormat.setOnLongClickListener(v -> toggleQuickActionVisiblity());
+        }
     }
 
     private MediaBrowser getBrowser() {
@@ -429,24 +450,92 @@ public class PlayerControllerFragment extends Fragment {
         MediaBrowser browser = getBrowser();
         // Guard against local files here too: onTracksChanged also calls this, and a local
         // file's format comes from its metadata in setMediaInfo, not the decoder label.
-        if (MusicUtil.isCurrentTrackLocal(browser)) return;
+        if (MusicUtil.isCurrentTrackLocal(browser)) {
+            updateOutputFormatView();
+            return;
+        }
 
         Format format = MusicUtil.getCurrentAudioFormat(browser);
-        if (format == null) return;
+        if (format == null) {
+            updateOutputFormatView();
+            return;
+        }
 
         String actual = MusicUtil.audioFormatLabel(format.sampleMimeType);
+        boolean transcoded = false;
         if (actual != null && !actual.isEmpty()) {
             String original = MusicUtil.getCurrentOriginalSuffix(browser);
-            boolean transcoded = MusicUtil.isTranscodedFormat(actual, original);
+            transcoded = MusicUtil.isTranscodedFormat(actual, original);
             playerMediaExtension.setText(transcoded
-                    ? actual + " (" + getString(R.string.player_transcoding) + ")"
+                    ? actual + " (TR)"
                     : actual);
         }
 
-        if (format.bitrate != Format.NO_VALUE && format.bitrate > 0) {
-            playerMediaBitrate.setText((format.bitrate / 1000) + "kbps");
+        MediaMetadata mediaMetadata = browser.getMediaMetadata();
+        List<String> items = new ArrayList<>();
+        if (transcoded) {
+            // When transcoded: show actual stream bitrate and decoder sample rate (omit original file bit depth)
+            if (format.bitrate != Format.NO_VALUE && format.bitrate > 0) {
+                items.add((format.bitrate / 1000) + "kbps");
+            } else {
+                try {
+                    int prefBitrate = Integer.parseInt(MusicUtil.getBitratePreference());
+                    if (prefBitrate > 0) {
+                        items.add(prefBitrate + "kbps");
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            if (format.sampleRate != Format.NO_VALUE && format.sampleRate > 0) {
+                items.add(new java.text.DecimalFormat("0.#").format(format.sampleRate / 1000.0) + "kHz");
+            }
+        } else {
+            // Direct / original stream: show source quality (bitrate, bit depth, sampling rate)
+            if (format.bitrate != Format.NO_VALUE && format.bitrate > 0) {
+                items.add((format.bitrate / 1000) + "kbps");
+            } else if (mediaMetadata.extras != null && mediaMetadata.extras.getInt("bitrate", 0) != 0) {
+                items.add(mediaMetadata.extras.getInt("bitrate", 0) + "kbps");
+            }
+
+            if (mediaMetadata.extras != null && mediaMetadata.extras.getInt("bitDepth", 0) != 0) {
+                items.add(mediaMetadata.extras.getInt("bitDepth", 0) + "b");
+            }
+
+            if (format.sampleRate != Format.NO_VALUE && format.sampleRate > 0) {
+                items.add(new java.text.DecimalFormat("0.#").format(format.sampleRate / 1000.0) + "kHz");
+            } else if (mediaMetadata.extras != null && mediaMetadata.extras.getInt("samplingRate", 0) != 0) {
+                items.add(new java.text.DecimalFormat("0.#").format(mediaMetadata.extras.getInt("samplingRate", 0) / 1000.0) + "kHz");
+            }
+        }
+
+        if (!items.isEmpty()) {
+            playerMediaBitrate.setText(TextUtils.join(" • ", items));
             playerMediaBitrate.setVisibility(Preferences.getBitrateVisible() ? View.VISIBLE : View.GONE);
         }
+
+        updateOutputFormatView();
+    }
+
+    private void updateOutputFormatView() {
+        if (playerMediaOutputFormat == null || getContext() == null) return;
+        playerMediaOutputFormat.setText(AudioOutputTracker.getShortOutputFormatString(requireContext()));
+        playerMediaOutputFormat.setVisibility(Preferences.isAudioOutputExpanded() ? View.VISIBLE : View.GONE);
+    }
+
+    private void toggleOutputFormatVisibility() {
+        if (playerMediaOutputFormat == null || getContext() == null) return;
+        ViewGroup parent = (ViewGroup) playerMediaOutputFormat.getParent();
+
+        TransitionSet transition = new TransitionSet()
+                .addTransition(new Fade())
+                .addTransition(new ChangeBounds())
+                .setDuration(300)
+                .setInterpolator(new AccelerateDecelerateInterpolator());
+        TransitionManager.beginDelayedTransition(parent, transition);
+
+        boolean willShow = !Preferences.isAudioOutputExpanded();
+        Preferences.setAudioOutputExpanded(willShow);
+        updateOutputFormatView();
     }
 
     private void toggleBitrateVisibility() {

@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="24dp"
+        android:orientation="vertical"
+        android:paddingBottom="24dp">
+
+        <TextView
+            style="@style/TitleMedium"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="16dp"
+            android:text="@string/audio_pipeline_dialog_title" />
+
+        <!-- 1. Source Stage -->
+        <TextView
+            style="@style/TitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorPrimary"
+            android:text="@string/audio_pipeline_section_source" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_source_format_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Track Format" />
+
+            <TextView
+                android:id="@+id/pipeline_source_format_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="FLAC 24-bit / 96.0 kHz Stereo" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_source_bitrate_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Bitrate" />
+
+            <TextView
+                android:id="@+id/pipeline_source_bitrate_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="2840 kbps (Lossless)" />
+        </LinearLayout>
+
+        <View
+            style="@style/Divider"
+            android:layout_marginVertical="12dp" />
+
+        <!-- 2. Decoder Stage -->
+        <TextView
+            style="@style/TitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorPrimary"
+            android:text="@string/audio_pipeline_section_decoder" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_decoder_engine_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Decoder Engine" />
+
+            <TextView
+                android:id="@+id/pipeline_decoder_engine_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="Media3 ExoPlayer / FFmpeg" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_decoder_output_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Decoded Sample" />
+
+            <TextView
+                android:id="@+id/pipeline_decoder_output_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="32-bit Float PCM (No Resampling)" />
+        </LinearLayout>
+
+        <View
+            style="@style/Divider"
+            android:layout_marginVertical="12dp" />
+
+        <!-- 3. DSP / Effects Stage -->
+        <TextView
+            style="@style/TitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorPrimary"
+            android:text="@string/audio_pipeline_section_dsp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_dsp_processing_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Processing" />
+
+            <TextView
+                android:id="@+id/pipeline_dsp_processing_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="ReplayGain (0.0 dB) • Float32" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_dsp_resampling_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Resampler" />
+
+            <TextView
+                android:id="@+id/pipeline_dsp_resampling_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="None (Bit-perfect Pass-through)" />
+        </LinearLayout>
+
+        <View
+            style="@style/Divider"
+            android:layout_marginVertical="12dp" />
+
+        <!-- 4. Output Driver Stage -->
+        <TextView
+            style="@style/TitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorPrimary"
+            android:text="@string/audio_pipeline_section_output_driver" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_driver_name_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Output Pipeline" />
+
+            <TextView
+                android:id="@+id/pipeline_driver_name_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="Direct HD (AUDIO_OUTPUT_FLAG_DIRECT)" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_driver_stream_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Buffer Stream" />
+
+            <TextView
+                android:id="@+id/pipeline_driver_stream_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="NEON SIMD Q31 Int32 PCM" />
+        </LinearLayout>
+
+        <View
+            style="@style/Divider"
+            android:layout_marginVertical="12dp" />
+
+        <!-- 5. Hardware Endpoint Stage -->
+        <TextView
+            style="@style/TitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorPrimary"
+            android:text="@string/audio_pipeline_section_hardware" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_hw_endpoint_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Active Endpoint" />
+
+            <TextView
+                android:id="@+id/pipeline_hw_endpoint_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="Qualcomm Snapdragon DAC → Speaker" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/pipeline_hw_format_key"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="4"
+                android:paddingEnd="8dp"
+                android:text="Hardware Rate" />
+
+            <TextView
+                android:id="@+id/pipeline_hw_format_val"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="7"
+                android:text="32-bit PCM • 96.0 kHz" />
+        </LinearLayout>
+
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

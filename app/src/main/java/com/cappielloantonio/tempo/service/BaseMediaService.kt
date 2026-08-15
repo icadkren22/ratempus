@@ -729,6 +729,15 @@ open class BaseMediaService : MediaLibraryService() {
         exoplayer.shuffleModeEnabled = Preferences.isShuffleModeEnabled()
         exoplayer.repeatMode = Preferences.getRepeatMode()
         exoplayer.playbackParameters = getPlaybackParameters(Preferences.getPlaybackSpeed())
+
+        exoplayer.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onAudioTrackInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioTrackConfig: AudioSink.AudioTrackConfig
+            ) {
+                AudioOutputTracker.updateAudioTrackConfig(audioTrackConfig)
+            }
+        })
     }
 
     private fun getPlaybackParameters(speed: Float): PlaybackParameters {

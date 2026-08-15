@@ -29,6 +29,7 @@ object Preferences {
     private const val PLAYBACK_SPEED_MANUAL_PITCH = "playback_speed_manual_pitch"
     private const val PLAYBACK_SPEED_MANUAL_PITCH_VALUE = "playback_speed_manual_pitch_value"
     private const val BITRATE_VISIBLE = "bitrate_visible"
+    private const val AUDIO_OUTPUT_EXPANDED = "audio_output_expanded"
     private const val QUICK_ACTION_VISIBLE = "quick_action_visible"
     private const val TRACK_NUMBER_VISIBLE = "track_number_visible"
     private const val ALBUM_YEAR_VISIBLE = "album_year_visible"
@@ -355,6 +356,16 @@ object Preferences {
     @JvmStatic
     fun setBitrateVisible(bitrateVisible: Boolean) {
         App.getInstance().preferences.edit().putBoolean(BITRATE_VISIBLE, bitrateVisible).apply()
+    }
+
+    @JvmStatic
+    fun isAudioOutputExpanded(): Boolean {
+        return App.getInstance().preferences.getBoolean(AUDIO_OUTPUT_EXPANDED, false)
+    }
+
+    @JvmStatic
+    fun setAudioOutputExpanded(expanded: Boolean) {
+        App.getInstance().preferences.edit().putBoolean(AUDIO_OUTPUT_EXPANDED, expanded).apply()
     }
 
     @JvmStatic
