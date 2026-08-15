@@ -8,6 +8,8 @@ import androidx.annotation.NonNull;
 import androidx.fragment.app.DialogFragment;
 import androidx.media3.common.MediaMetadata;
 
+import androidx.media3.common.util.UnstableApi;
+
 import com.cappielloantonio.tempo.R;
 import com.cappielloantonio.tempo.databinding.DialogTrackInfoBinding;
 import com.cappielloantonio.tempo.glide.CustomGlideRequest;
@@ -19,6 +21,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.Objects;
 
+@UnstableApi
 public class TrackInfoDialog extends DialogFragment {
     private DialogTrackInfoBinding bind;
 
@@ -197,6 +200,14 @@ public class TrackInfoDialog extends DialogFragment {
 
         if (prioritizeServerTranscoding) {
             info.append(getString(R.string.track_info_summary_server_prioritized));
+
+            bind.trakTranscodingInfoTextView.setText(info);
+            return;
+        }
+
+        int origBitrate = mediaMetadata.extras != null ? mediaMetadata.extras.getInt("bitrate", 0) : 0;
+        if (!MusicUtil.shouldTranscode(origBitrate) && (!transcodingExtension.equals("raw") || !transcodingBitrate.equals("Original"))) {
+            info.append(getString(R.string.track_info_summary_adaptive_bypassed, String.valueOf(origBitrate), MusicUtil.getBitratePreference()));
 
             bind.trakTranscodingInfoTextView.setText(info);
             return;
