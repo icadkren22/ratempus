@@ -257,7 +257,8 @@ class TranscodingMediaSource(
             releaseChildSource(null)
 
             val seconds = Util.usToMs(positionUs) / 1000
-            val newUri = MusicUtil.getStreamUri(mediaItem.mediaId, seconds.toInt())
+            val origBitrate = mediaItem.mediaMetadata.extras?.getInt("bitrate", 0) ?: 0
+            val newUri = MusicUtil.getStreamUri(mediaItem.mediaId, origBitrate, seconds.toInt())
             val newMediaItem = mediaItem.buildUpon().setUri(newUri).build()
 
             val newSource = progressiveMediaSourceFactory.createMediaSource(newMediaItem)

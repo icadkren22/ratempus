@@ -66,6 +66,7 @@ object Preferences {
     private const val REPLAY_GAIN_PREVENT_CLIPPING = "replay_gain_prevent_clipping"
     private const val LOUDNESS_PREAMP = "loudness_preamp"
     private const val AUDIO_TRANSCODE_PRIORITY = "audio_transcode_priority"
+    private const val AUDIO_ADAPTIVE_TRANSCODING = "audio_adaptive_transcoding"
     private const val STREAMING_CACHE_STORAGE = "streaming_cache_storage"
     private const val DOWNLOAD_STORAGE = "download_storage"
     private const val DOWNLOAD_DIRECTORY_URI = "download_directory_uri"
@@ -648,6 +649,11 @@ object Preferences {
     @JvmStatic
     fun isServerPrioritized(): Boolean {
         return App.getInstance().preferences.getBoolean(AUDIO_TRANSCODE_PRIORITY, false)
+    }
+
+    @JvmStatic
+    fun isAdaptiveTranscodingEnabled(): Boolean {
+        return App.getInstance().preferences.getBoolean(AUDIO_ADAPTIVE_TRANSCODING, true)
     }
 
     @JvmStatic

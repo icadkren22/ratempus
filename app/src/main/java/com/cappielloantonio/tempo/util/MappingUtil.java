@@ -171,7 +171,11 @@ public class MappingUtil {
         if (mediaId != null && DownloadUtil.getDownloadTracker(App.getContext()).isDownloaded(mediaId)) {
             return old;
         }
-        Uri uri = old.requestMetadata.mediaUri == null ? null : MusicUtil.updateStreamUri(old.requestMetadata.mediaUri);
+        int origBitrate = 0;
+        if (old.requestMetadata.extras != null) {
+            origBitrate = old.requestMetadata.extras.getInt("bitrate", 0);
+        }
+        Uri uri = old.requestMetadata.mediaUri == null ? null : MusicUtil.updateStreamUri(old.requestMetadata.mediaUri, origBitrate);
         return new MediaItem.Builder()
                 .setMediaId(old.mediaId)
                 .setMediaMetadata(old.mediaMetadata)
@@ -494,7 +498,7 @@ public class MappingUtil {
         }
 
         // Fallback to streaming
-        return MusicUtil.getStreamUri(media.getId());
+        return MusicUtil.getStreamUri(media.getId(), media.getBitrate());
     }
 
     private static Uri getUri(PodcastEpisode podcastEpisode) {
