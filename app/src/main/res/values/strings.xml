@@ -684,6 +684,12 @@
     <string name="track_info_transcoded_content_type">Transcoded content type</string>
     <string name="track_info_transcoded_suffix">Transcoded suffix</string>
     <string name="track_info_year">Year</string>
+    <string name="audio_pipeline_dialog_title">Audio Processing Pipeline</string>
+    <string name="audio_pipeline_section_source">1. Source Track</string>
+    <string name="audio_pipeline_section_decoder">2. Decoder Engine</string>
+    <string name="audio_pipeline_section_dsp">3. DSP &amp; Effects</string>
+    <string name="audio_pipeline_section_output_driver">4. Output Driver</string>
+    <string name="audio_pipeline_section_hardware">5. Hardware Endpoint</string>
     <string name="undraw_page">unDraw</string>
     <string name="undraw_thanks">A special thanks goes to unDraw without whose illustrations we could not have made this application more beautiful.</string>
 	<string name="undraw_url" translatable="false">https://undraw.co/</string>
