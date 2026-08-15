@@ -48,10 +48,10 @@ jobs:
           sed -ri '/org.gradle.toolchains.foojay-resolver-convention/d' settings.gradle
           ./gradlew assembleTempusDebug
 
-      - name: Upload Tempus Debug APK
+      - name: Upload Tempus arm64 Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ratempus-debug-apk
-          path: app/build/outputs/apk/tempus/debug/*.apk
+          name: ratempus-arm64-debug-apk
+          path: app/build/outputs/apk/tempus/debug/*arm64*.apk
           if-no-files-found: error
           retention-days: 7
