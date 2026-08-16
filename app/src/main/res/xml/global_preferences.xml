@@ -169,7 +169,13 @@
                 android:key="direct_hd_enabled"
                 android:title="@string/settings_direct_hd_title"
                 android:summary="@string/settings_direct_hd_summary" />
+            <SwitchPreference
+                android:defaultValue="true"
+                android:key="usb_dac_exclusive_enabled"
+                android:title="@string/settings_usb_dac_exclusive_title"
+                android:summary="@string/settings_usb_dac_exclusive_summary" />
         </PreferenceCategory>
+
 
         <PreferenceCategory app:title="@string/settings_title_equalizer">
             <ListPreference

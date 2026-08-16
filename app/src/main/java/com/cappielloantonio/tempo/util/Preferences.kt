@@ -66,6 +66,7 @@ object Preferences {
     private const val REPLAY_GAIN_MODE = "replay_gain_mode"
     private const val REPLAY_GAIN_PREVENT_CLIPPING = "replay_gain_prevent_clipping"
     private const val DIRECT_HD_ENABLED = "direct_hd_enabled"
+    private const val USB_DAC_EXCLUSIVE_ENABLED = "usb_dac_exclusive_enabled"
     private const val LOUDNESS_PREAMP = "loudness_preamp"
     private const val AUDIO_TRANSCODE_PRIORITY = "audio_transcode_priority"
     private const val AUDIO_ADAPTIVE_TRANSCODING = "audio_adaptive_transcoding"
@@ -657,6 +658,17 @@ object Preferences {
     fun setDirectHdEnabled(enabled: Boolean) {
         App.getInstance().preferences.edit().putBoolean(DIRECT_HD_ENABLED, enabled).apply()
     }
+
+    @JvmStatic
+    fun isUsbDacExclusiveEnabled(): Boolean {
+        return App.getInstance().preferences.getBoolean(USB_DAC_EXCLUSIVE_ENABLED, true)
+    }
+
+    @JvmStatic
+    fun setUsbDacExclusiveEnabled(enabled: Boolean) {
+        App.getInstance().preferences.edit().putBoolean(USB_DAC_EXCLUSIVE_ENABLED, enabled).apply()
+    }
+
 
     @JvmStatic
     fun getLoudnessPreamp(): Float {

@@ -577,6 +577,8 @@
     <string name="settings_title_direct_hd">Direct HD Output</string>
     <string name="settings_direct_hd_title">Enable Direct HD</string>
     <string name="settings_direct_hd_summary">Bypass Android mixer for bit-perfect Hi-Res hardware output</string>
+    <string name="settings_usb_dac_exclusive_title">USB DAC Exclusive</string>
+    <string name="settings_usb_dac_exclusive_summary">Bypass Android audio HAL and stream bit-perfect directly to USB DAC (Userspace UAC2 Driver)</string>
     <string name="settings_title_syncing">Syncing</string>
     <string name="settings_title_transcoding">Transcoding</string>
     <string name="settings_title_transcoding_download">Transcoding Download</string>
