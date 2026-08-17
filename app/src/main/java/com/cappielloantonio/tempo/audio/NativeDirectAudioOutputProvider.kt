@@ -19,7 +19,9 @@ import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
 import com.cappielloantonio.tempo.audio.usb.UsbAudioConfig
 import com.cappielloantonio.tempo.audio.usb.UsbDacManager
 import com.cappielloantonio.tempo.audio.usb.UsbExclusiveOutput
+import com.cappielloantonio.tempo.audio.usb.UsbVirtualCastVolumeProvider
 import com.cappielloantonio.tempo.util.Preferences
+
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -149,20 +151,26 @@ private class UsbExclusiveAudioOutput(
     private var pausedPositionUs = 0L
 
     private val silentTracker = SilentAudioTracker()
+    private val virtualCastVolume = UsbVirtualCastVolumeProvider(context) { gain ->
+        exclusiveOutput.setVolume(gain)
+    }
 
     init {
         opened = exclusiveOutput.open(usbConfig, outputConfig.encoding)
         if (!opened) {
             Log.e(TAG, "UsbExclusiveOutput.open() failed at init")
+        } else {
+            exclusiveOutput.setVolume(virtualCastVolume.currentGain)
         }
     }
 
     override fun play() {
         if (!isPlaying) {
-            Log.i(TAG, "USB Exclusive playback started: ${usbConfig.sampleRate}Hz ${usbConfig.bitDepth}bit (5% volume)")
+            Log.i(TAG, "USB Exclusive playback started: ${usbConfig.sampleRate}Hz ${usbConfig.bitDepth}bit (virtual cast volume active)")
             // Anchor wall clock so position resumes from where it paused
             playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
             silentTracker.play()
+            virtualCastVolume.start()
         }
         isPlaying = true
         exclusiveOutput.start()
@@ -214,20 +222,24 @@ private class UsbExclusiveAudioOutput(
         }
         isPlaying = false
         silentTracker.stop()
+        virtualCastVolume.stop()
         exclusiveOutput.stop()
     }
 
     override fun release() {
         isPlaying = false
         silentTracker.release()
+        virtualCastVolume.stop()
         exclusiveOutput.close()
         listeners.forEach { it.onReleased() }
         listeners.clear()
     }
 
     override fun setVolume(volume: Float) {
-        // Fixed at 5% volume to protect IEMs
+        val playerFraction = volume.coerceIn(0f, 1f)
+        exclusiveOutput.setVolume(virtualCastVolume.currentGain * playerFraction)
     }
+
 
     override fun isOffloadedPlayback(): Boolean = false
     override fun getAudioSessionId(): Int = outputConfig.audioSessionId

@@ -127,7 +127,7 @@ struct UsbAudioCtx {
     int      src_encoding;     // 4 for PCM_FLOAT, 2 for PCM_16BIT
     int      bytes_per_sample; // DAC destination bytes per sample: 2 for 16-bit, 3 for 24-bit, 4 for 32-bit
     int      frame_size;       // channel_count * bytes_per_sample
-    float    volume;           // Fixed 0.30f (30% volume) to protect IEMs
+    std::atomic<float> volume{0.01f}; // Dynamic volume with 0.5f max safe ceiling
 
     uint32_t microframe_accum; // Fractional accumulator for High-Speed microframes (8000 Hz)
 
@@ -295,10 +295,9 @@ Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeOpen(
     ctx->src_encoding     = src_encoding;
     ctx->bytes_per_sample = bit_depth / 8;
     ctx->frame_size       = channel_count * ctx->bytes_per_sample;
-    ctx->volume           = 0.001f; // Fixed 1% volume
-
-
+    ctx->volume.store(0.01f, std::memory_order_relaxed);
     ctx->microframe_accum = 0;
+
 
     pthread_mutex_lock(&g_claim_mutex);
 
@@ -421,8 +420,9 @@ Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeWrite(
 
     if (!src_bytes) return -1;
 
-    float vol = ctx->volume; // Fixed 0.30f (30%)
+    float vol = ctx->volume.load(std::memory_order_relaxed);
     int src_bytes_per_sample = (ctx->src_encoding == 2) ? 2 : 4;
+
     int src_frame_size = ctx->channel_count * src_bytes_per_sample;
     int total_input_frames = sizeInBytes / src_frame_size;
     if (total_input_frames <= 0) {
@@ -574,4 +574,16 @@ Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeClose(JNIEnv*
     LOGI("nativeClose: completed");
 }
 
+JNIEXPORT void JNICALL
+Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeSetVolume(
+        JNIEnv*, jclass, jlong h, jfloat volume) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (!ctx) return;
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 0.5f) volume = 0.5f; // Safe 0.5f max ceiling
+    ctx->volume.store(volume, std::memory_order_relaxed);
+    LOGI("nativeSetVolume: updated gain to %.6f", volume);
+}
+
 } // extern "C"
+
