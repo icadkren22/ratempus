@@ -151,9 +151,7 @@ private class UsbExclusiveAudioOutput(
     private var pausedPositionUs = 0L
 
     private val silentTracker = SilentAudioTracker()
-    private val virtualCastVolume = UsbVirtualCastVolumeProvider(context) { gain ->
-        exclusiveOutput.setVolume(gain)
-    }
+    private val virtualCastVolume = UsbVirtualCastVolumeProvider.getInstance(context)
 
     init {
         opened = exclusiveOutput.open(usbConfig, outputConfig.encoding)
@@ -170,7 +168,9 @@ private class UsbExclusiveAudioOutput(
             // Anchor wall clock so position resumes from where it paused
             playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
             silentTracker.play()
-            virtualCastVolume.start()
+            virtualCastVolume.setActive(true) { gain ->
+                exclusiveOutput.setVolume(gain)
+            }
         }
         isPlaying = true
         exclusiveOutput.start()
@@ -185,6 +185,7 @@ private class UsbExclusiveAudioOutput(
         }
         isPlaying = false
         silentTracker.pause()
+        virtualCastVolume.setActive(false)
         exclusiveOutput.stop()
     }
 
@@ -222,18 +223,19 @@ private class UsbExclusiveAudioOutput(
         }
         isPlaying = false
         silentTracker.stop()
-        virtualCastVolume.stop()
+        virtualCastVolume.setActive(false)
         exclusiveOutput.stop()
     }
 
     override fun release() {
         isPlaying = false
         silentTracker.release()
-        virtualCastVolume.stop()
+        virtualCastVolume.setActive(false)
         exclusiveOutput.close()
         listeners.forEach { it.onReleased() }
         listeners.clear()
     }
+
 
     override fun setVolume(volume: Float) {
         val playerFraction = volume.coerceIn(0f, 1f)
