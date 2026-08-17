@@ -153,6 +153,20 @@ private class UsbExclusiveAudioOutput(
     private val silentTracker = SilentAudioTracker()
     private val virtualCastVolume = UsbVirtualCastVolumeProvider.getInstance(context)
 
+    /** Listens for the "Enable DAC HW Volume" toggle being flipped during active playback. */
+    private val prefListener = androidx.preference.PreferenceManager
+        .getDefaultSharedPreferences(context)
+        .registerOnSharedPreferenceChangeListener { _, key ->
+            if (key == com.cappielloantonio.tempo.util.Preferences.USB_DAC_HW_VOLUME_ENABLED) {
+                if (isPlaying) {
+                    // Re-apply current volume through the new mode immediately
+                    virtualCastVolume.setVolume(virtualCastVolume.currentVolumeIndex)
+                    Log.i(TAG, "DAC HW Volume toggle changed during playback — mode switched")
+                }
+            }
+        }
+
+
     init {
         opened = exclusiveOutput.open(usbConfig, outputConfig.encoding)
         if (!opened) {
@@ -168,7 +182,7 @@ private class UsbExclusiveAudioOutput(
             // Anchor wall clock so position resumes from where it paused
             playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
             silentTracker.play()
-            virtualCastVolume.setActive(true) { gain ->
+            virtualCastVolume.setActive(true, output = exclusiveOutput) { gain ->
                 exclusiveOutput.setVolume(gain)
             }
         }

@@ -149,6 +149,24 @@ class UsbExclusiveOutput(private val context: Context) {
         }
     }
 
+    /**
+     * Enable/disable Hardware DAC Volume mode.
+     * When enabled, [volumeIndex] (0..100) is mapped to UAC2 1/256 dB units and sent
+     * directly to Feature Unit 2 on the DAC chip — bypassing the audio buffer for instant effect.
+     * Software gain is set to 1.0f (unity) to avoid double attenuation.
+     * When disabled, DAC is reset to 0 dB and software gain resumes.
+     */
+    fun setHwVolume(enabled: Boolean, volumeIndex: Int = 50) {
+        if (nativeHandle == 0L) return
+        // Map 0..100 slider to -128..0 dB in UAC2 1/256 dB units
+        // vol_db_256 = 0 means 0 dB (max), -32768 means -128 dB (mute)
+        // We use linear mapping: 100 -> 0, 0 -> -32768 capped at -80 dB for safety
+        val minDb256 = -20480  // -80 dB * 256 (safe floor — most DACs handle this)
+        val volDb256 = if (volumeIndex <= 0) minDb256
+                       else (minDb256 * (100 - volumeIndex) / 100)
+        nativeSetHwVolume(nativeHandle, enabled, volDb256.toShort())
+    }
+
     fun stop() {
         if (nativeHandle != 0L) nativeStop(nativeHandle)
     }
@@ -174,6 +192,7 @@ class UsbExclusiveOutput(private val context: Context) {
     private external fun nativeStart(handle: Long): Boolean
     private external fun nativeWrite(handle: Long, buffer: ByteBuffer, offset: Int, size: Int): Int
     private external fun nativeSetVolume(handle: Long, volume: Float)
+    private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)
 

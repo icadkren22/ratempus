@@ -32,6 +32,9 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
     private var mediaRouter: MediaRouter? = null
     private var userRoute: MediaRouter.UserRouteInfo? = null
 
+    /** Reference to the active native output — kept for HW volume delivery. */
+    private var exclusiveOutput: UsbExclusiveOutput? = null
+
     var isUsbExclusiveActive: Boolean = false
         private set
 
@@ -54,16 +57,17 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
         playerListeners.remove(listener)
     }
 
-    fun setActive(active: Boolean, callback: ((Float) -> Unit)? = null) {
+    fun setActive(active: Boolean, output: UsbExclusiveOutput? = null, callback: ((Float) -> Unit)? = null) {
         isUsbExclusiveActive = active
-        if (callback != null) {
-            gainCallback = callback
-        }
+        if (output != null) exclusiveOutput = output
+        if (callback != null) gainCallback = callback
 
         if (active) {
-            gainCallback?.invoke(currentGain)
+            // Apply current volume immediately using whichever mode is configured
+            applyCurrentVolume()
             startMediaRouter()
         } else {
+            exclusiveOutput = null
             stopMediaRouter()
         }
 
@@ -79,10 +83,35 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
             userRoute?.volume = clamped
         }
 
-        val gain = computePerceptualGain(clamped)
-        gainCallback?.invoke(gain)
+        applyCurrentVolume()
         notifyVolumeChanged(clamped)
-        Log.i(TAG, "USB Exclusive volume updated: $clamped% -> gain=$gain")
+    }
+
+    /**
+     * Applies the current [currentVolumeIndex] using either Hardware DAC volume or Software gain,
+     * depending on [Preferences.isUsbDacHwVolumeEnabled] and whether [exclusiveOutput] is set.
+     */
+    private fun applyCurrentVolume() {
+        val hwEnabled = com.cappielloantonio.tempo.util.Preferences.isUsbDacHwVolumeEnabled()
+        val out = exclusiveOutput
+
+        if (hwEnabled && out != null) {
+            // HW mode: send volume directly to DAC Feature Unit 2 (instant, no buffer latency)
+            out.setHwVolume(true, currentVolumeIndex)
+            // Software gain -> 1.0f (unity / pass-through, avoids double attenuation)
+            gainCallback?.invoke(1.0f)
+            Log.i(TAG, "USB HW volume: $currentVolumeIndex% -> DAC Feature Unit 2")
+        } else {
+            // SW mode: disable HW volume if it was previously enabled
+            if (hwEnabled && out == null) {
+                Log.w(TAG, "HW volume enabled but no active output — falling back to SW gain")
+            }
+            // Ensure DAC is at 0 dB if we're in SW mode and have an output
+            out?.setHwVolume(false)
+            val gain = computePerceptualGain(currentVolumeIndex)
+            gainCallback?.invoke(gain)
+            Log.i(TAG, "USB SW volume: $currentVolumeIndex% -> gain=$gain")
+        }
     }
 
     fun adjustVolume(direction: Int) {
