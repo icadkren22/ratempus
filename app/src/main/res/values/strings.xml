@@ -579,6 +579,9 @@
     <string name="settings_direct_hd_summary">Bypass Android mixer for bit-perfect Hi-Res hardware output</string>
     <string name="settings_usb_dac_exclusive_title">USB DAC Exclusive</string>
     <string name="settings_usb_dac_exclusive_summary">Bypass Android audio HAL and stream bit-perfect directly to USB DAC (Userspace UAC2 Driver)</string>
+    <string name="settings_usb_dac_hw_volume_title">Enable DAC HW Volume</string>
+    <string name="settings_usb_dac_hw_volume_summary">Control DAC analog output registers directly via USB Feature Unit 2</string>
+
     <string name="settings_title_syncing">Syncing</string>
     <string name="settings_title_transcoding">Transcoding</string>
     <string name="settings_title_transcoding_download">Transcoding Download</string>
