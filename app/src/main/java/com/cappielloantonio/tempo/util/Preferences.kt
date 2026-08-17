@@ -67,7 +67,7 @@ object Preferences {
     private const val REPLAY_GAIN_PREVENT_CLIPPING = "replay_gain_prevent_clipping"
     private const val DIRECT_HD_ENABLED = "direct_hd_enabled"
     private const val USB_DAC_EXCLUSIVE_ENABLED = "usb_dac_exclusive_enabled"
-    private const val USB_DAC_HW_VOLUME_ENABLED = "usb_dac_hw_volume_enabled"
+    const val USB_DAC_HW_VOLUME_ENABLED = "usb_dac_hw_volume_enabled"
     private const val LOUDNESS_PREAMP = "loudness_preamp"
 
     private const val AUDIO_TRANSCODE_PRIORITY = "audio_transcode_priority"

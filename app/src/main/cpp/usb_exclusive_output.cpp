@@ -27,8 +27,15 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 #define UAC2_REQUEST_SET_CUR     0x01
+#define UAC2_REQUEST_GET_CUR     0x81
+#define UAC2_REQUEST_GET_RANGE   0xA2
 #define UAC2_CS_CONTROL_SAM_FREQ 0x01
 #define UAC2_FU_VOLUME_CONTROL   0x02
+#define UAC2_FU_MUTE_CONTROL     0x01
+// Feature Unit ID for JM6PRO_2 DAC (hardcoded; found by descriptor inspection)
+#define JM6PRO2_FU_ID            2
+#define JM6PRO2_AC_IFACE         0
+
 
 // 8 microframe packets per URB = 1 ms per URB for High-Speed (8000 microframes/sec)
 #define PACKETS_PER_URB 8
@@ -127,7 +134,9 @@ struct UsbAudioCtx {
     int      src_encoding;     // 4 for PCM_FLOAT, 2 for PCM_16BIT
     int      bytes_per_sample; // DAC destination bytes per sample: 2 for 16-bit, 3 for 24-bit, 4 for 32-bit
     int      frame_size;       // channel_count * bytes_per_sample
-    std::atomic<float> volume{0.01f}; // Dynamic volume with 0.5f max safe ceiling
+    std::atomic<float>   volume{0.01f};          // Software gain (used when hw_volume_enabled=false)
+    std::atomic<bool>    hw_volume_enabled{false}; // If true: use Feature Unit 2 HW volume instead of software
+    std::atomic<int16_t> hw_vol_db{0};            // Current HW volume in 1/256 dB UAC2 units (0 = 0dB, -32768 = -128dB)
 
     uint32_t microframe_accum; // Fractional accumulator for High-Speed microframes (8000 Hz)
 
@@ -250,21 +259,47 @@ static int set_clock_frequency(int fd, uint8_t clock_id, uint32_t rate) {
     return rc;
 }
 
-static void set_hardware_volume(int fd, uint8_t fu_id, int16_t vol_db) {
+static void set_hardware_mute(int fd, uint8_t fu_id, uint8_t ac_iface, uint8_t muted) {
+    struct usbdevfs_ctrltransfer ctrl;
+    memset(&ctrl, 0, sizeof(ctrl));
+    ctrl.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0x21
+    ctrl.bRequest     = UAC2_REQUEST_SET_CUR;                               // 0x01
+    ctrl.wValue       = (uint16_t)(UAC2_FU_MUTE_CONTROL << 8) | 0x00;      // Channel 0 = Master
+    ctrl.wIndex       = (uint16_t)(fu_id << 8) | ac_iface;
+    ctrl.wLength      = 1;
+    ctrl.data         = &muted;
+    ctrl.timeout      = 500;
+    int rc = ioctl(fd, USBDEVFS_CONTROL, &ctrl);
+    if (rc < 0) {
+        LOGW("set_hardware_mute fu=%d muted=%d failed: errno=%d (%s)", fu_id, muted, errno, strerror(errno));
+    } else {
+        LOGI("set_hardware_mute fu=%d muted=%d -> SUCCESS", fu_id, muted);
+    }
+}
+
+// Set hardware volume on Master (ch=0), Left (ch=1), Right (ch=2) channels.
+// vol_db is in UAC2 1/256 dB units: 0x0000 = 0 dB, 0x8000 = -128 dB (MUTE).
+static void set_hardware_volume(int fd, uint8_t fu_id, uint8_t ac_iface, int16_t vol_db) {
     for (uint8_t ch = 0; ch <= 2; ch++) {
         struct usbdevfs_ctrltransfer ctrl;
         memset(&ctrl, 0, sizeof(ctrl));
-        ctrl.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
-        ctrl.bRequest     = UAC2_REQUEST_SET_CUR;
+        ctrl.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0x21
+        ctrl.bRequest     = UAC2_REQUEST_SET_CUR;                               // 0x01
         ctrl.wValue       = (uint16_t)(UAC2_FU_VOLUME_CONTROL << 8) | ch;
-        ctrl.wIndex       = (uint16_t)(fu_id << 8) | 0x00;
+        ctrl.wIndex       = (uint16_t)(fu_id << 8) | ac_iface;
         ctrl.wLength      = 2;
         int16_t val       = vol_db;
         ctrl.data         = &val;
         ctrl.timeout      = 500;
-        ioctl(fd, USBDEVFS_CONTROL, &ctrl);
+        int rc = ioctl(fd, USBDEVFS_CONTROL, &ctrl);
+        if (rc < 0) {
+            LOGW("set_hardware_volume fu=%d ch=%d vol_db=%d failed: errno=%d", fu_id, ch, vol_db, errno);
+        }
     }
+    LOGI("set_hardware_volume fu=%d vol_db=%d (%.2f dB) -> done",
+         fu_id, vol_db, (float)vol_db / 256.0f);
 }
+
 
 extern "C" {
 
@@ -343,8 +378,11 @@ Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeOpen(
     // 4. Set UAC2 Clock Source frequency (Clock ID 9 for JM6PRO_2)
     set_clock_frequency(local_fd, 9, ctx->sample_rate);
 
-    // 5. Unmute hardware DAC Feature Unit (ID 2) to 0 dB (full scale)
-    set_hardware_volume(local_fd, 2, 0x0000);
+    // 5. Unmute hardware DAC Feature Unit 2 and set to 0 dB (full scale for HW mode)
+    //    Software volume (ctx->volume) still handles actual attenuation when hw_volume_enabled=false
+    set_hardware_mute(local_fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
+    set_hardware_volume(local_fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
+
 
     // 6. Set alternate setting for active audio streaming
     struct usbdevfs_setinterface si;
@@ -582,8 +620,42 @@ Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeSetVolume(
     if (volume < 0.0f) volume = 0.0f;
     if (volume > 0.5f) volume = 0.5f; // Safe 0.5f max ceiling
     ctx->volume.store(volume, std::memory_order_relaxed);
-    LOGI("nativeSetVolume: updated gain to %.6f", volume);
+    LOGI("nativeSetVolume: updated sw gain to %.6f", volume);
+}
+
+// Enable or disable hardware DAC volume control via UAC Feature Unit 2.
+// When enabled: volume slider maps 0..100 -> -128..0 dB on the DAC chip directly (no buffer delay).
+//               Software gain (ctx->volume) is set to 1.0f (pass-through) to avoid double attenuation.
+// When disabled: DAC HW volume is reset to 0 dB (unity), software gain resumes from ctx->volume.
+//
+// vol_db_256: volume in UAC2 1/256 dB units (e.g. 0 = 0dB, -5120 = -20dB, -32768 = -128dB/mute)
+JNIEXPORT void JNICALL
+Java_com_cappielloantonio_tempo_audio_usb_UsbExclusiveOutput_nativeSetHwVolume(
+        JNIEnv*, jclass, jlong h, jboolean enabled, jshort vol_db_256) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (!ctx) return;
+
+    if (enabled) {
+        ctx->hw_volume_enabled.store(true, std::memory_order_relaxed);
+        ctx->hw_vol_db.store(vol_db_256, std::memory_order_relaxed);
+
+        // Send volume to Feature Unit 2 on the DAC chip (instant, no buffer latency)
+        set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, (int16_t)vol_db_256);
+        set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0); // Ensure unmuted
+
+        // Set software gain to 1.0f (unity) to avoid double attenuation
+        ctx->volume.store(1.0f, std::memory_order_relaxed);
+        LOGI("nativeSetHwVolume: HW mode ON vol_db_256=%d (%.2f dB)", vol_db_256, (float)vol_db_256 / 256.0f);
+    } else {
+        ctx->hw_volume_enabled.store(false, std::memory_order_relaxed);
+
+        // Reset DAC to 0 dB / unmuted — software gain takes over again
+        set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
+        set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
+        LOGI("nativeSetHwVolume: HW mode OFF — DAC reset to 0dB, SW gain resumes");
+    }
 }
 
 } // extern "C"
+
 
