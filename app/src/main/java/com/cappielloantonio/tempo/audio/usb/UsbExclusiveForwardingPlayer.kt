@@ -1,8 +1,11 @@
 package com.cappielloantonio.tempo.audio.usb
 
+import android.util.Log
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
+
+private const val TAG = "UsbExclusivePlayer"
 
 /**
  * ForwardingPlayer that intercepts device volume and routing for USB Exclusive DAC.
@@ -39,25 +42,55 @@ class UsbExclusiveForwardingPlayer(
 
     override fun setDeviceVolume(volume: Int) {
         if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "setDeviceVolume: $volume")
             volumeProvider.setVolume(volume)
         } else {
             super.setDeviceVolume(volume)
         }
     }
 
+    override fun setDeviceVolume(volume: Int, flags: Int) {
+        if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "setDeviceVolume (flags=$flags): $volume")
+            volumeProvider.setVolume(volume)
+        } else {
+            super.setDeviceVolume(volume, flags)
+        }
+    }
+
     override fun increaseDeviceVolume() {
         if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "increaseDeviceVolume")
             volumeProvider.adjustVolume(1)
         } else {
             super.increaseDeviceVolume()
         }
     }
 
+    override fun increaseDeviceVolume(flags: Int) {
+        if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "increaseDeviceVolume (flags=$flags)")
+            volumeProvider.adjustVolume(1)
+        } else {
+            super.increaseDeviceVolume(flags)
+        }
+    }
+
     override fun decreaseDeviceVolume() {
         if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "decreaseDeviceVolume")
             volumeProvider.adjustVolume(-1)
         } else {
             super.decreaseDeviceVolume()
+        }
+    }
+
+    override fun decreaseDeviceVolume(flags: Int) {
+        if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "decreaseDeviceVolume (flags=$flags)")
+            volumeProvider.adjustVolume(-1)
+        } else {
+            super.decreaseDeviceVolume(flags)
         }
     }
 
@@ -68,13 +101,46 @@ class UsbExclusiveForwardingPlayer(
         return super.isDeviceMuted()
     }
 
+    override fun setDeviceMuted(muted: Boolean) {
+        if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "setDeviceMuted: $muted")
+            if (muted) volumeProvider.setVolume(0)
+        } else {
+            super.setDeviceMuted(muted)
+        }
+    }
+
+    override fun setDeviceMuted(muted: Boolean, flags: Int) {
+        if (volumeProvider.isUsbExclusiveActive) {
+            Log.d(TAG, "setDeviceMuted (flags=$flags): $muted")
+            if (muted) volumeProvider.setVolume(0)
+        } else {
+            super.setDeviceMuted(muted, flags)
+        }
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean {
+        if (volumeProvider.isUsbExclusiveActive) {
+            when (command) {
+                Player.COMMAND_GET_DEVICE_VOLUME,
+                Player.COMMAND_SET_DEVICE_VOLUME,
+                Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                Player.COMMAND_ADJUST_DEVICE_VOLUME,
+                Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS -> return true
+            }
+        }
+        return super.isCommandAvailable(command)
+    }
+
     override fun getAvailableCommands(): Player.Commands {
         val base = super.getAvailableCommands()
         if (volumeProvider.isUsbExclusiveActive) {
             return base.buildUpon()
                 .add(Player.COMMAND_GET_DEVICE_VOLUME)
                 .add(Player.COMMAND_SET_DEVICE_VOLUME)
+                .add(Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS)
                 .add(Player.COMMAND_ADJUST_DEVICE_VOLUME)
+                .add(Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS)
                 .build()
         }
         return base
