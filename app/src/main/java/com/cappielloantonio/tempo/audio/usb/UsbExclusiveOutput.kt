@@ -143,6 +143,12 @@ class UsbExclusiveOutput(private val context: Context) {
         return nativeWrite(nativeHandle, buffer, offset, size)
     }
 
+    fun setVolume(gain: Float) {
+        if (nativeHandle != 0L) {
+            nativeSetVolume(nativeHandle, gain)
+        }
+    }
+
     fun stop() {
         if (nativeHandle != 0L) nativeStop(nativeHandle)
     }
@@ -167,8 +173,10 @@ class UsbExclusiveOutput(private val context: Context) {
 
     private external fun nativeStart(handle: Long): Boolean
     private external fun nativeWrite(handle: Long, buffer: ByteBuffer, offset: Int, size: Int): Int
+    private external fun nativeSetVolume(handle: Long, volume: Float)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)
+
 
     companion object {
         init {

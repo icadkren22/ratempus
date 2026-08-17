@@ -23,7 +23,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.cappielloantonio.tempo.audio.NativeDirectAudioOutputProvider
+import com.cappielloantonio.tempo.audio.usb.UsbExclusiveForwardingPlayer
+import com.cappielloantonio.tempo.audio.usb.UsbVirtualCastVolumeProvider
 import androidx.media3.exoplayer.source.MediaSource
+
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.*
 import androidx.media3.session.MediaSession.ControllerInfo
@@ -106,11 +109,16 @@ open class BaseMediaService : MediaLibraryService() {
 
     open fun playerInitHook() {
         initializeExoPlayer()
-        initializeMediaLibrarySession(exoplayer)
-        initializePlayerListener(exoplayer)
+        val wrappedPlayer = UsbExclusiveForwardingPlayer(
+            exoplayer,
+            UsbVirtualCastVolumeProvider.getInstance(this)
+        )
+        initializeMediaLibrarySession(wrappedPlayer)
+        initializePlayerListener(wrappedPlayer)
         initializeSleepTimer()
-        setPlayer(null, exoplayer)
+        setPlayer(null, wrappedPlayer)
     }
+
 
     open fun getMediaLibrarySessionCallback(): MediaLibrarySession.Callback {
         return BaseSessionCallback(baseContext, this)
