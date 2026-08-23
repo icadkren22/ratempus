@@ -24,7 +24,7 @@ class NativeDirectAudioTrack(
         private var symbolsLoaded = false
 
         init {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 try {
                     System.loadLibrary("directaudio")
                     isLibraryLoaded = true
@@ -36,7 +36,7 @@ class NativeDirectAudioTrack(
                     Log.e(TAG, "Failed to load libdirectaudio.so: ${t.message}")
                 }
             } else {
-                Log.i(TAG, "Direct HD native driver requires Android 12+ (API 31+). Bypassed on API ${android.os.Build.VERSION.SDK_INT}.")
+                Log.i(TAG, "Direct HD native driver requires Android 8+ (API 26+). Bypassed on API ${android.os.Build.VERSION.SDK_INT}.")
             }
         }
 
