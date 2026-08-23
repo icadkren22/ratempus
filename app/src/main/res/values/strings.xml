@@ -583,6 +583,9 @@
     <string name="settings_title_skip_min_star_rating_dialog">Songs with a rating of:</string>
     <string name="settings_title_share">Share</string>
     <string name="settings_title_sound">Sound</string>
+    <string name="settings_title_direct_hd">Direct HD Output</string>
+    <string name="settings_direct_hd_title">Enable Direct HD</string>
+    <string name="settings_direct_hd_summary">Bypass Android mixer for bit-perfect Hi-Res hardware output</string>
     <string name="settings_title_syncing">Syncing</string>
     <string name="settings_title_transcoding">Transcoding</string>
     <string name="settings_title_transcoding_download">Transcoding Download</string>

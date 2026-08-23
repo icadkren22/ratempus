@@ -67,6 +67,7 @@ object Preferences {
     private const val MUSIC_DIRECTORY_SECTION_VISIBILITY = "music_directory_section_visibility"
     private const val REPLAY_GAIN_MODE = "replay_gain_mode"
     private const val REPLAY_GAIN_PREVENT_CLIPPING = "replay_gain_prevent_clipping"
+    private const val DIRECT_HD_ENABLED = "direct_hd_enabled"
     private const val LOUDNESS_PREAMP = "loudness_preamp"
     private const val AUDIO_TRANSCODE_PRIORITY = "audio_transcode_priority"
     private const val STREAMING_CACHE_STORAGE = "streaming_cache_storage"
@@ -669,6 +670,16 @@ object Preferences {
     @JvmStatic
     fun isReplayGainPreventClipping(): Boolean {
         return App.getInstance().preferences.getBoolean(REPLAY_GAIN_PREVENT_CLIPPING, true)
+    }
+
+    @JvmStatic
+    fun isDirectHdEnabled(): Boolean {
+        return App.getInstance().preferences.getBoolean(DIRECT_HD_ENABLED, true)
+    }
+
+    @JvmStatic
+    fun setDirectHdEnabled(enabled: Boolean) {
+        App.getInstance().preferences.edit().putBoolean(DIRECT_HD_ENABLED, enabled).apply()
     }
 
     @JvmStatic

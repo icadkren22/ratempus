@@ -154,6 +154,14 @@
 
     <com.eddyizm.tempus.util.ClickablePreferenceCategory app:title="@string/settings_title_sound">
 
+        <PreferenceCategory app:title="@string/settings_title_direct_hd">
+            <SwitchPreference
+                android:defaultValue="true"
+                android:key="direct_hd_enabled"
+                android:title="@string/settings_direct_hd_title"
+                android:summary="@string/settings_direct_hd_summary" />
+        </PreferenceCategory>
+
         <PreferenceCategory app:title="@string/settings_title_equalizer">
             <ListPreference
                 android:key="selected_equalizer"
