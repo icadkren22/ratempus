@@ -39,7 +39,39 @@ public class MusicUtil {
     private static final Pattern BITRATE_PATTERN = Pattern.compile("&maxBitRate=\\d+");
     private static final Pattern FORMAT_PATTERN = Pattern.compile("&format=\\w+");
 
-    public static Uri getStreamUri(String id, int timeOffset) {
+    public static boolean shouldTranscode(Integer originalBitrate) {
+        if (Preferences.isServerPrioritized()) {
+            return false;
+        }
+        int transport = getActiveTransport();
+        String formatPref = transcodingFormatFor(transport);
+        if ("raw".equals(formatPref)) {
+            return false;
+        }
+        String bitratePref = bitrateFor(transport, formatPref);
+        if ("0".equals(bitratePref)) {
+            return false;
+        }
+        if (Preferences.isAdaptiveTranscodingEnabled() && originalBitrate != null && originalBitrate > 0) {
+            try {
+                int targetBitrate = Integer.parseInt(bitratePref);
+                if (targetBitrate > 0) {
+                    // When the original bitrate is -+10% or lower than the defined bitrate:
+                    // i.e., originalBitrate <= targetBitrate * 1.10
+                    // (for instance, original is 128 kbps vs target 128 kbps, or 135 kbps vs 128 kbps, or 96 kbps vs 128 kbps)
+                    // Transcoding is turned OFF to preserve original quality and avoid lossy-to-lossy re-encoding.
+                    int threshold = (int) Math.round(targetBitrate * 1.10);
+                    if (originalBitrate <= threshold) {
+                        Log.i(TAG, "Adaptive transcoding: original bitrate (" + originalBitrate + " kbps) <= threshold (" + threshold + " kbps for target " + targetBitrate + " kbps). Transcoding bypassed.");
+                        return false;
+                    }
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+        return true;
+    }
+
+    public static Uri getStreamUri(String id, Integer originalBitrate, int timeOffset) {
         Map<String, String> params = App.getSubsonicClientInstance(false).getParams();
 
         StringBuilder uri = new StringBuilder();
@@ -65,10 +97,11 @@ public class MusicUtil {
         String selectedBitrate = bitrateFor(transport, selectedFormat);
         Log.i(TAG, "DEBUG: Requesting Format: " + selectedFormat + " at Bitrate: " + selectedBitrate);
 
-        if (!Preferences.isServerPrioritized())
+        boolean transcode = shouldTranscode(originalBitrate);
+        if (transcode) {
             uri.append("&maxBitRate=").append(selectedBitrate);
-        if (!Preferences.isServerPrioritized())
             uri.append("&format=").append(selectedFormat);
+        }
         if (timeOffset > 0)
             uri.append("&timeOffset=").append(timeOffset);
 
@@ -79,11 +112,19 @@ public class MusicUtil {
         return Uri.parse(uri.toString());
     }
 
-    public static Uri getStreamUri(String id) {
-        return getStreamUri(id, 0);
+    public static Uri getStreamUri(String id, int timeOffset) {
+        return getStreamUri(id, null, timeOffset);
     }
 
-    public static Uri updateStreamUri(Uri uri) {
+    public static Uri getStreamUri(String id, Integer originalBitrate) {
+        return getStreamUri(id, originalBitrate, 0);
+    }
+
+    public static Uri getStreamUri(String id) {
+        return getStreamUri(id, null, 0);
+    }
+
+    public static Uri updateStreamUri(Uri uri, Integer originalBitrate) {
         if (uri == null) return null;
 
         String scheme = uri.getScheme();
@@ -92,7 +133,7 @@ public class MusicUtil {
         if (scheme != null && (scheme.equals("content") || scheme.equals("file"))) {
             return uri;
         }
-        
+
         String s = uri.toString();
 
         Matcher m1 = BITRATE_PATTERN.matcher(s);
@@ -103,12 +144,16 @@ public class MusicUtil {
         int transport = getActiveTransport();
         String format = transcodingFormatFor(transport);
 
-        if (!Preferences.isServerPrioritized())
+        if (shouldTranscode(originalBitrate)) {
             s += "&maxBitRate=" + bitrateFor(transport, format);
-        if (!Preferences.isServerPrioritized())
             s += "&format=" + format;
+        }
 
         return Uri.parse(s);
+    }
+
+    public static Uri updateStreamUri(Uri uri) {
+        return updateStreamUri(uri, null);
     }
 
     public static Uri getDownloadUri(String id) {

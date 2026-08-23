@@ -427,6 +427,8 @@
     <string name="settings_always_on_display">Always on display</string>
     <string name="settings_allow_playlist_duplicates">Allow adding duplicates to playlist</string>
     <string name="settings_allow_playlist_duplicates_summary">If enabled, duplicates won\'t be checked while adding to a playlist.</string>
+    <string name="settings_audio_adaptive_transcoding_summary">Automatically bypass transcoding when track original bitrate is within +10% or lower than the configured target bitrate.</string>
+    <string name="settings_audio_adaptive_transcoding_title">Adaptive transcoding</string>
     <string name="settings_audio_transcode_download_format">Transcode format</string>
     <string name="settings_audio_transcode_download_priority_summary">If enabled, Tempus will not force download the track with the transcode settings below.</string>
     <string name="settings_audio_transcode_download_priority_title">Prioritize server settings used for streaming in downloads</string>
@@ -683,6 +685,7 @@
     <string name="track_info_summary_downloaded_file">The file has been downloaded using the Subsonic APIs. The codec and bitrate of the file remain unchanged from the source file.</string>
     <string name="track_info_summary_full_transcode">The application will request the server to transcode the file and modify its bitrate. The user requested codec is %1$s, with a bitrate of %2$s. Any potential changes to the codec and bitrate of the file in the chosen format will be handled by the server, which may or may not support the operation.</string>
     <string name="track_info_summary_original_file">The application will only read the original file as provided by the server. The app will explicitly request the server for the untranscoded file with the bitrate of the original source.</string>
+    <string name="track_info_summary_adaptive_bypassed">Adaptive transcoding bypassed: the track\'s original bitrate (%1$s kbps) is within +10%% or lower than the configured target bitrate (%2$s kbps). Playing original file directly.</string>
     <string name="track_info_summary_server_prioritized">The quality of the file to be played is left up to the server\'s decision. The app will not enforce the choice of codec and bitrate for any potential transcoding.</string>
     <string name="track_info_summary_transcoding_bitrate">The application will request the server to modify the bitrate of the file. The user requested a bitrate of %1$s, while the codec of the source file will remain the same. Any changes to the bitrate of the file in the chosen format will be done by the server, which may or may not support the operation.</string>
     <string name="track_info_summary_transcoding_codec">The application will request the server to transcode the file. The requested codec by the user is %1$s, while the bitrate will be the same as the source file. The potential transcoding of the file into the chosen format is dependent on the server, as it may or may not support the operation.</string>

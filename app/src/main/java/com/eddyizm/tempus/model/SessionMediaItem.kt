@@ -289,11 +289,11 @@ class SessionMediaItem() {
     private fun getStreamUri(): Uri {
         return when (type) {
             Constants.MEDIA_TYPE_MUSIC -> {
-                MusicUtil.getStreamUri(id)
+                MusicUtil.getStreamUri(id, bitrate)
             }
 
             Constants.MEDIA_TYPE_PODCAST -> {
-                MusicUtil.getStreamUri(streamId)
+                MusicUtil.getStreamUri(streamId, bitrate)
             }
 
             Constants.MEDIA_TYPE_RADIO -> {
@@ -301,7 +301,7 @@ class SessionMediaItem() {
             }
 
             else -> {
-                MusicUtil.getStreamUri(id)
+                MusicUtil.getStreamUri(id, bitrate)
             }
         }
     }
