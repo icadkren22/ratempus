@@ -161,7 +161,13 @@ public class AudioProcessDialog extends DialogFragment {
         // STAGE 3: DSP & Processing
         // ==========================================
         String rgMode = Preferences.getReplayGainMode();
-        float currentGainDb = ReplayGainUtil.getCurrentGainDb();
+        float currentGainDb = 0.0f;
+        if (ReplayGainUtil.getAudioProcessor() != null) {
+            float linear = ReplayGainUtil.getAudioProcessor().getTargetGainLinear();
+            if (linear > 0.000001f) {
+                currentGainDb = (float) (20.0 * Math.log10(linear));
+            }
+        }
         String rgString;
         if (Objects.equals(rgMode, "disabled")) {
             rgString = "ReplayGain Disabled";

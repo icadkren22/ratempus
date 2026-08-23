@@ -84,6 +84,10 @@ public final class ReplayGainAudioProcessor extends BaseAudioProcessor {
         hasPendingFlushGain = false;
     }
 
+    public float getTargetGainLinear() {
+        return targetGainLinear;
+    }
+
     public float getCurrentGainDb() {
         if (targetGainLinear <= 0.000001f) return 0.0f;
         return (float) (20.0 * Math.log10(targetGainLinear));

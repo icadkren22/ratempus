@@ -409,14 +409,14 @@ public class MusicUtil {
 
     // The format and the ceiling have to describe the same network, so both resolve from a single
     // transport read. Two reads let a handover land between them and pair settings never configured.
-    private static String transcodingFormatFor(int transport) {
+    public static String transcodingFormatFor(int transport) {
         if (transport == TRANSPORT_NONE) return "raw";
         if (transport == NetworkCapabilities.TRANSPORT_CELLULAR)
             return Preferences.getAudioTranscodeFormatMobile();
         return Preferences.getAudioTranscodeFormatWifi();
     }
 
-    private static String bitrateFor(int transport, String format) {
+    public static String bitrateFor(int transport, String format) {
         // No ceiling applies to an untranscoded stream. This also covers TRANSPORT_NONE, which
         // transcodingFormatFor already answers with "raw".
         if (format.equals("raw")) return "0";
