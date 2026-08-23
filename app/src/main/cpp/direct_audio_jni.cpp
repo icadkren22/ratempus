@@ -58,6 +58,12 @@ static AudioTrack_flush_t       s_flush       = nullptr;
 static AudioTrack_write_t       s_write       = nullptr;
 static AudioTrack_getPosition_t s_getPosition = nullptr;
 
+static inline uintptr_t resolve_addr(uintptr_t base, uintptr_t addr) {
+    if (addr == 0) return 0;
+    if (addr >= base) return addr;
+    return base + addr;
+}
+
 struct FindLibData {
     const char*      targetLib;
     uintptr_t        baseAddr;
@@ -77,7 +83,7 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
         const Elf64_Phdr* ph = &info->dlpi_phdr[i];
         if (ph->p_type != PT_DYNAMIC) continue;
 
-        const Elf64_Dyn* dyn = (const Elf64_Dyn*)(base + ph->p_vaddr);
+        const Elf64_Dyn* dyn = (const Elf64_Dyn*)resolve_addr(base, ph->p_vaddr);
         uintptr_t symtabAddr = 0, strtabAddr = 0, gnuHashAddr = 0;
         size_t strsz = 0;
 
@@ -95,12 +101,12 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
             break;
         }
 
-        const Elf64_Sym* symtab = (const Elf64_Sym*)(base + symtabAddr);
-        const char*      strtab = (const char*)     (base + strtabAddr);
+        const Elf64_Sym* symtab = (const Elf64_Sym*)resolve_addr(base, symtabAddr);
+        const char*      strtab = (const char*)     resolve_addr(base, strtabAddr);
 
         size_t symCount = 0;
         if (gnuHashAddr) {
-            const uint32_t* gh       = (const uint32_t*)(base + gnuHashAddr);
+            const uint32_t* gh       = (const uint32_t*)resolve_addr(base, gnuHashAddr);
             uint32_t nbuckets        = gh[0];
             uint32_t symoffset       = gh[1];
             uint32_t bloomsz         = gh[2];
@@ -131,7 +137,7 @@ static void* findSymbol(const FindLibData& fld, const char* name) {
         const Elf64_Sym& sym = fld.symTab[i];
         if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC || sym.st_value == 0) continue;
         if (strcmp(fld.strTab + sym.st_name, name) == 0)
-            return (void*)(fld.baseAddr + sym.st_value);
+            return (void*)resolve_addr(fld.baseAddr, sym.st_value);
     }
     return nullptr;
 }

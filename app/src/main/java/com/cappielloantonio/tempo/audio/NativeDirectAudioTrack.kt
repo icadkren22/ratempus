@@ -24,15 +24,19 @@ class NativeDirectAudioTrack(
         private var symbolsLoaded = false
 
         init {
-            try {
-                System.loadLibrary("directaudio")
-                isLibraryLoaded = true
-                Log.i(TAG, "libdirectaudio.so loaded")
-                // Load system symbols via runtime namespace bridge (Poweramp technique)
-                symbolsLoaded = nativeLoadSymbols()
-                Log.i(TAG, "nativeLoadSymbols: $symbolsLoaded")
-            } catch (t: Throwable) {
-                Log.e(TAG, "Failed to load libdirectaudio.so: ${t.message}")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                try {
+                    System.loadLibrary("directaudio")
+                    isLibraryLoaded = true
+                    Log.i(TAG, "libdirectaudio.so loaded")
+                    // Load system symbols via runtime namespace bridge (Poweramp technique)
+                    symbolsLoaded = nativeLoadSymbols()
+                    Log.i(TAG, "nativeLoadSymbols: $symbolsLoaded")
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to load libdirectaudio.so: ${t.message}")
+                }
+            } else {
+                Log.i(TAG, "Direct HD native driver requires Android 12+ (API 31+). Bypassed on API ${android.os.Build.VERSION.SDK_INT}.")
             }
         }
 
