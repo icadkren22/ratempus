@@ -23,6 +23,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 28.0.12674087 and Accept Licenses
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          yes | sdkmanager "ndk;28.0.12674087" >/dev/null 2>&1 || true
+
       - name: Cache Gradle and wrapper
         uses: actions/cache@v3
         with:
