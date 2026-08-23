@@ -78,6 +78,7 @@ struct FindLibData {
     uintptr_t        baseAddr;
     const Elf64_Sym* symTab;
     const char*      strTab;
+    size_t           strSz;
     size_t           symCount;
 };
 
@@ -105,7 +106,7 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
             }
         }
 
-        if (!symtabAddr || !strtabAddr) {
+        if (!symtabAddr || !strtabAddr || strsz == 0) {
             LOGE("symtab or strtab missing in DYNAMIC section");
             break;
         }
@@ -114,26 +115,33 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
         const char*      strtab = (const char*)     resolve_addr(base, strtabAddr);
 
         size_t symCount = 0;
-        if (gnuHashAddr) {
-            const uint32_t* gh       = (const uint32_t*)resolve_addr(base, gnuHashAddr);
-            uint32_t nbuckets        = gh[0];
-            uint32_t symoffset       = gh[1];
-            uint32_t bloomsz         = gh[2];
-            const uint32_t* buckets  = gh + 4 + (bloomsz * 64 / 32);
-            uint32_t maxsym          = symoffset;
-            for (uint32_t b = 0; b < nbuckets; b++)
-                if (buckets[b] > maxsym) maxsym = buckets[b];
-            if (maxsym >= symoffset) {
-                const uint32_t* chains = buckets + nbuckets;
-                uint32_t idx = maxsym - symoffset;
-                while (idx < 65536 && !(chains[idx] & 1)) idx++;
-                symCount = (size_t)(maxsym - symoffset + idx + 2);
+        uintptr_t absSymtab = resolve_addr(base, symtabAddr);
+        uintptr_t absStrtab = resolve_addr(base, strtabAddr);
+        if (absStrtab > absSymtab) {
+            symCount = (absStrtab - absSymtab) / sizeof(Elf64_Sym);
+        } else if (gnuHashAddr) {
+            const uint32_t* gh = (const uint32_t*)resolve_addr(base, gnuHashAddr);
+            uint32_t nbuckets  = gh[0];
+            uint32_t symoffset = gh[1];
+            uint32_t bloomsz   = gh[2];
+            if (nbuckets > 0 && nbuckets < 65536 && bloomsz < 65536) {
+                const uint32_t* buckets = gh + 4 + (bloomsz * 64 / 32);
+                uint32_t maxsym = symoffset;
+                for (uint32_t b = 0; b < nbuckets; b++)
+                    if (buckets[b] > maxsym) maxsym = buckets[b];
+                if (maxsym >= symoffset) {
+                    const uint32_t* chains = buckets + nbuckets;
+                    uint32_t idx = maxsym - symoffset;
+                    while (idx < 16384 && !(chains[idx] & 1)) idx++;
+                    symCount = (size_t)(maxsym - symoffset + idx + 2);
+                }
             }
         }
-        if (symCount == 0) symCount = strsz / 16;
+        if (symCount == 0 || symCount > 10000) symCount = 2048;
 
         fld->symTab   = symtab;
         fld->strTab   = strtab;
+        fld->strSz    = strsz;
         fld->symCount = symCount;
         break;
     }
@@ -141,23 +149,27 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
 }
 
 static void* findSymbol(const FindLibData& fld, const char* name) {
-    if (!fld.symTab || !fld.strTab) return nullptr;
+    if (!fld.symTab || !fld.strTab || fld.strSz == 0) return nullptr;
     for (size_t i = 0; i < fld.symCount; i++) {
         const Elf64_Sym& sym = fld.symTab[i];
+        if (sym.st_name >= fld.strSz) continue;
         if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC || sym.st_value == 0) continue;
-        if (strcmp(fld.strTab + sym.st_name, name) == 0)
+        const char* symName = fld.strTab + sym.st_name;
+        if (strcmp(symName, name) == 0)
             return (void*)resolve_addr(fld.baseAddr, sym.st_value);
     }
     return nullptr;
 }
 
 static void* findSymbolPrefix(const FindLibData& fld, const char* prefix) {
-    if (!fld.symTab || !fld.strTab) return nullptr;
+    if (!fld.symTab || !fld.strTab || fld.strSz == 0) return nullptr;
     size_t preLen = strlen(prefix);
     for (size_t i = 0; i < fld.symCount; i++) {
         const Elf64_Sym& sym = fld.symTab[i];
+        if (sym.st_name >= fld.strSz) continue;
         if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC || sym.st_value == 0) continue;
-        if (strncmp(fld.strTab + sym.st_name, prefix, preLen) == 0)
+        const char* symName = fld.strTab + sym.st_name;
+        if (strncmp(symName, prefix, preLen) == 0)
             return (void*)resolve_addr(fld.baseAddr, sym.st_value);
     }
     return nullptr;
