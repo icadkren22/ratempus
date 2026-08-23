@@ -190,6 +190,23 @@ object AudioOutputTracker {
     }
 
     @JvmStatic
+    fun getShortSummary(): String {
+        val config = currentConfig
+        return if (config != null && config.sampleRate > 0) {
+            val rate = formatKhzShort(config.sampleRate)
+            val bitDepth = when (config.encoding) {
+                C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> "32-bit"
+                C.ENCODING_PCM_24BIT -> "24-bit"
+                else -> "16-bit"
+            }
+            val driver = if (isDirectAudioSupported()) "Direct HD" else "AudioTrack"
+            "$bitDepth • $rate ($driver)"
+        } else {
+            if (isDirectAudioSupported()) "Direct HD" else "AudioTrack"
+        }
+    }
+
+    @JvmStatic
     fun getShortOutputFormatString(context: Context): String {
         return if (isDirectAudioSupported()) {
             val sampleRate = getOutputSampleRateString(context).substringBefore(" (")
