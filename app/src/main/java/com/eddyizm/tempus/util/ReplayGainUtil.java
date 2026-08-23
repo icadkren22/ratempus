@@ -60,6 +60,10 @@ public class ReplayGainUtil {
         return audioProcessor;
     }
 
+    public static float getCurrentGainDb() {
+        return audioProcessor.getCurrentGainDb();
+    }
+
     public static void release() {
         gainDataMap.clear();
         prefetchedIds.clear();

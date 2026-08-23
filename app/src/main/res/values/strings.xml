@@ -861,4 +861,11 @@
     <!-- TODO: Remove or change this placeholder text -->
     <string name="hello_blank_fragment">Hello blank fragment</string>
 
+    <string name="audio_pipeline_dialog_title">Audio Processing Pipeline</string>
+    <string name="audio_pipeline_section_source">1. Source Track</string>
+    <string name="audio_pipeline_section_decoder">2. Decoder Engine</string>
+    <string name="audio_pipeline_section_dsp">3. DSP &amp; Effects</string>
+    <string name="audio_pipeline_section_output_driver">4. Output Driver</string>
+    <string name="audio_pipeline_section_hardware">5. Hardware Endpoint</string>
+
 </resources>
