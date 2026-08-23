@@ -88,13 +88,6 @@
                 android:value="true" />
         </service>
 
-        <receiver
-            android:name="androidx.media.session.MediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
 
         <receiver
             android:name=".widget.WidgetProvider4x1"
