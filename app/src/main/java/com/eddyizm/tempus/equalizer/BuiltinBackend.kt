@@ -1,67 +1,45 @@
 package com.eddyizm.tempus.equalizer
 
 import android.content.Context
-import android.media.audiofx.Equalizer
 import com.eddyizm.tempus.util.Preferences
 
-class BuiltinBackend: EqualizerBackend {
-    private var equalizer: Equalizer? = null
+/**
+ * Built-in Equalizer backend powered by our standalone software DSP [EqualizerAudioProcessor].
+ * Operates on PCM samples in the audio pipeline, completely free of OS AudioEffect limitations.
+ */
+class BuiltinBackend : EqualizerBackend {
+
+    private val processor: EqualizerAudioProcessor
+        get() = EqualizerAudioProcessor.getInstance()
 
     override fun attach(audioSessionId: Int, context: Context): Boolean {
-        if (audioSessionId == 0 || audioSessionId == -1) return false
-        val attached = attachToSession(audioSessionId, context.applicationContext)
-        if (attached) {
-            val enabled = Preferences.isEqualizerEnabled()
-            setEnabled(enabled)
-            val bands = getNumberOfBands()
-            val savedLevels = Preferences.getEqualizerBandLevels(bands)
-            for (i in 0 until bands) {
-                setBandLevel(i.toShort(), savedLevels[i])
-            }
+        val enabled = Preferences.isEqualizerEnabled()
+        setEnabled(enabled)
+        val bands = getNumberOfBands()
+        val savedLevels = Preferences.getEqualizerBandLevels(bands)
+        for (i in 0 until bands) {
+            setBandLevel(i.toShort(), savedLevels[i])
         }
-        return attached
-    }
-
-    private fun attachToSession(audioSessionId: Int, context: Context): Boolean {
-        release(audioSessionId, context.applicationContext)
-        if (audioSessionId != 0 && audioSessionId != -1) {
-            try {
-                equalizer = Equalizer(0, audioSessionId).apply {
-                    enabled = true
-                }
-                return true
-            } catch (e: Exception) {
-                // Some devices may not support Equalizer or audio session may be invalid
-                equalizer = null
-            }
-        }
-        return false
+        return true
     }
 
     override fun release(audioSessionId: Int, context: Context) {
-        release()
-    }
-
-    private fun release() {
-        equalizer?.release()
-        equalizer = null
+        // Standalone processor is persistent in the audio sink
     }
 
     override fun setBandLevel(band: Short, level: Short) {
-        equalizer?.setBandLevel(band, level)
+        processor.setBandLevel(band.toInt(), level.toInt())
     }
 
-    override fun getNumberOfBands(): Short = equalizer?.numberOfBands ?: 0
+    override fun getNumberOfBands(): Short = processor.numberOfBands.toShort()
 
-    override fun getBandLevelRange(): ShortArray? = equalizer?.bandLevelRange
+    override fun getBandLevelRange(): ShortArray = processor.bandLevelRange
 
-    override fun getCenterFreq(band: Short): Int? =
-        equalizer?.getCenterFreq(band)?.div(1000)
+    override fun getCenterFreq(band: Short): Int = processor.getCenterFreq(band.toInt())
 
-    override fun getBandLevel(band: Short): Short? =
-        equalizer?.getBandLevel(band)
+    override fun getBandLevel(band: Short): Short = processor.getBandLevel(band.toInt()).toShort()
 
     override fun setEnabled(enabled: Boolean) {
-        equalizer?.enabled = enabled
+        processor.isEnabled = enabled
     }
 }
