@@ -5,6 +5,7 @@ add_library(
     directaudio
     SHARED
     direct_audio_jni.cpp
+    usb_exclusive_output.cpp
 )
 
 find_library(log-lib log)

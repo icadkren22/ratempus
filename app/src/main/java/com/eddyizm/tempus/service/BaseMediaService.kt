@@ -22,6 +22,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.eddyizm.tempus.audio.NativeDirectAudioOutputProvider
+import com.eddyizm.tempus.audio.usb.UsbExclusiveForwardingPlayer
+import com.eddyizm.tempus.audio.usb.UsbVirtualCastVolumeProvider
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.*
@@ -105,10 +107,14 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
 
     open fun playerInitHook() {
         initializeExoPlayer()
-        initializeMediaLibrarySession(exoplayer)
-        initializePlayerListener(exoplayer)
+        val wrappedPlayer = UsbExclusiveForwardingPlayer(
+            exoplayer,
+            UsbVirtualCastVolumeProvider.getInstance(this)
+        )
+        initializeMediaLibrarySession(wrappedPlayer)
+        initializePlayerListener(wrappedPlayer)
         initializeSleepTimer()
-        setPlayer(null, exoplayer)
+        setPlayer(null, wrappedPlayer)
     }
 
     open fun getMediaLibrarySessionCallback(): MediaLibrarySession.Callback {

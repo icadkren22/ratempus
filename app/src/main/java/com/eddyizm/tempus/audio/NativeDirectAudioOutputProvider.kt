@@ -1,6 +1,7 @@
 package com.eddyizm.tempus.audio
 
 import android.content.Context
+import android.hardware.usb.UsbManager
 import android.media.AudioDeviceInfo
 import android.os.SystemClock
 import android.util.Log
@@ -15,14 +16,21 @@ import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport
 import androidx.media3.exoplayer.audio.AudioOutputProvider.InitializationException
 import androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig
 import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
+import com.eddyizm.tempus.audio.usb.UsbAudioConfig
+import com.eddyizm.tempus.audio.usb.UsbDacManager
+import com.eddyizm.tempus.audio.usb.UsbExclusiveOutput
+import com.eddyizm.tempus.audio.usb.UsbVirtualCastVolumeProvider
+import com.eddyizm.tempus.util.Preferences
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 
 private const val TAG = "NativeDirectAudio"
 
 /**
- * Media3 [AudioOutputProvider] that feeds pure decoded PCM directly to Android's internal
- * native `AudioTrack` with `AUDIO_OUTPUT_FLAG_DIRECT`, bypassing the system 48 kHz mixer.
+ * Media3 [AudioOutputProvider] that feeds uncompressed decoded PCM directly to either:
+ * 1. USB DAC Exclusive userspace driver (via libdirectaudio.so UAC2 isochronous engine)
+ * 2. Native Direct AudioTrack (via libaudioclient.so AUDIO_OUTPUT_FLAG_DIRECT)
+ * 3. Fallback -> standard Media3 AudioTrackAudioOutputProvider.
  */
 @UnstableApi
 class NativeDirectAudioOutputProvider(private val context: Context) : AudioOutputProvider {
@@ -30,6 +38,7 @@ class NativeDirectAudioOutputProvider(private val context: Context) : AudioOutpu
     private val fallback: AudioTrackAudioOutputProvider =
         AudioTrackAudioOutputProvider.Builder(context).build()
     private val listeners = CopyOnWriteArrayList<AudioOutputProvider.Listener>()
+    private val usbDacManager = UsbDacManager.getInstance(context)
 
     override fun getFormatSupport(formatConfig: FormatConfig): FormatSupport {
         return fallback.getFormatSupport(formatConfig)
@@ -42,7 +51,36 @@ class NativeDirectAudioOutputProvider(private val context: Context) : AudioOutpu
 
     @Throws(InitializationException::class)
     override fun getAudioOutput(outputConfig: OutputConfig): AudioOutput {
-        if (!outputConfig.isOffload && NativeDirectAudioTrack.isSupported()) {
+        val isUsbExclusiveEnabled = Preferences.isUsbDacExclusiveEnabled()
+        val isDirectHdEnabled = Preferences.isDirectHdEnabled()
+
+        // ── Path 1: USB DAC Exclusive (Userspace UAC2 Driver) ──────────────
+        if (isUsbExclusiveEnabled && usbDacManager.isUsbDacConnected) {
+            val usbDevice = usbDacManager.connectedUsbDevice
+            if (usbDevice != null) {
+                val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                if (usbManager.hasPermission(usbDevice)) {
+                    try {
+                        val chCount = if (outputConfig.channelMask == android.media.AudioFormat.CHANNEL_OUT_MONO) 1 else 2
+                        val exclusiveOutput = UsbExclusiveOutput(context)
+                        val config = exclusiveOutput.findBestConfig(usbDevice, outputConfig.sampleRate)
+                        if (config != null) {
+                            Log.i(TAG, "Routing to USB Exclusive (userspace URB): " +
+                                    "${config.sampleRate}Hz ${config.bitDepth}bit srcCh=$chCount via iface=${config.streamingIface}")
+                            return UsbExclusiveAudioOutput(context, exclusiveOutput, config, outputConfig, chCount)
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "UsbExclusiveOutput init failed: ${t.message}, falling through")
+                    }
+                } else {
+                    Log.w(TAG, "No USB permission yet for ${usbDevice.productName}, requesting...")
+                    usbDacManager.requestPermission(usbDevice)
+                }
+            }
+        }
+
+        // ── Path 2: Direct HD (Speaker / Jack via Native AudioTrack DIRECT) ──
+        if (isDirectHdEnabled && !outputConfig.isOffload && NativeDirectAudioTrack.isSupported()) {
             try {
                 val chCount = if (outputConfig.channelMask == android.media.AudioFormat.CHANNEL_OUT_MONO) 1 else 2
                 val track = NativeDirectAudioTrack(
@@ -59,6 +97,7 @@ class NativeDirectAudioOutputProvider(private val context: Context) : AudioOutpu
                 Log.w(TAG, "NativeDirectAudioTrack creation failed, falling back: ${t.message}")
             }
         }
+
         return fallback.getAudioOutput(outputConfig)
     }
 
@@ -76,6 +115,145 @@ class NativeDirectAudioOutputProvider(private val context: Context) : AudioOutpu
         fallback.release()
         listeners.clear()
     }
+}
+
+/**
+ * Media3 [AudioOutput] implementation for USB DAC Exclusive userspace streaming.
+ * Uses DirectHD-style synchronous condition variable pacing and accurate hardware position reporting.
+ */
+@UnstableApi
+private class UsbExclusiveAudioOutput(
+    private val context: Context,
+    private val exclusiveOutput: UsbExclusiveOutput,
+    private val usbConfig: UsbAudioConfig,
+    private val outputConfig: OutputConfig,
+    private val srcChannelCount: Int
+) : AudioOutput {
+
+    private val listeners = CopyOnWriteArrayList<AudioOutput.Listener>()
+    private var playbackParams = PlaybackParameters.DEFAULT
+
+    private var isPlaying = false
+    private var opened = false
+    private var lastNotifiedAdvancingMs = 0L
+    private var playEpochNanos = 0L
+    private var pausedPositionUs = 0L
+
+    private val silentTracker = SilentAudioTracker()
+    private val virtualCastVolume = UsbVirtualCastVolumeProvider.getInstance(context)
+
+    init {
+        opened = exclusiveOutput.open(usbConfig, outputConfig.encoding, srcChannelCount)
+        if (!opened) {
+            Log.e(TAG, "UsbExclusiveOutput.open() failed at init")
+        }
+    }
+
+    override fun play() {
+        if (!isPlaying) {
+            Log.i(TAG, "USB Exclusive playback started: ${usbConfig.sampleRate}Hz ${usbConfig.bitDepth}bit srcCh=$srcChannelCount (HW volume active)")
+            playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
+            silentTracker.play()
+            virtualCastVolume.setActive(true, output = exclusiveOutput)
+        }
+        isPlaying = true
+        exclusiveOutput.start()
+        val nowMs = SystemClock.elapsedRealtime()
+        listeners.forEach { it.onPositionAdvancing(nowMs) }
+    }
+
+    override fun pause() {
+        if (isPlaying) {
+            pausedPositionUs = (System.nanoTime() - playEpochNanos) / 1_000L
+        }
+        isPlaying = false
+        silentTracker.pause()
+        virtualCastVolume.setActive(false)
+        exclusiveOutput.stop()
+    }
+
+    override fun write(byteBuffer: ByteBuffer, sizeInBytes: Int, presentationTimeUs: Long): Boolean {
+        if (!byteBuffer.hasRemaining()) return true
+        if (!opened) return false
+
+        val srcBytesPerSample = if (outputConfig.encoding == android.media.AudioFormat.ENCODING_PCM_16BIT) 2 else 4
+        val srcFrameSize = srcChannelCount * srcBytesPerSample
+        val bytesToWrite = (byteBuffer.remaining() / srcFrameSize) * srcFrameSize
+        if (bytesToWrite <= 0) return true
+
+        val written = exclusiveOutput.write(byteBuffer, byteBuffer.position(), bytesToWrite)
+        if (written > 0) {
+            byteBuffer.position(byteBuffer.position() + written)
+
+            val nowMs = SystemClock.elapsedRealtime()
+            if (nowMs - lastNotifiedAdvancingMs > 50) {
+                lastNotifiedAdvancingMs = nowMs
+                listeners.forEach { it.onPositionAdvancing(nowMs) }
+            }
+            return byteBuffer.remaining() < srcFrameSize
+        }
+        return false
+    }
+
+    override fun flush() {
+        pausedPositionUs = 0L
+        playEpochNanos = System.nanoTime()
+        if (isPlaying) {
+            exclusiveOutput.start()
+        }
+    }
+
+    override fun stop() {
+        if (isPlaying) {
+            pausedPositionUs = (System.nanoTime() - playEpochNanos) / 1_000L
+        }
+        isPlaying = false
+        silentTracker.stop()
+        virtualCastVolume.setActive(false)
+        exclusiveOutput.stop()
+    }
+
+    override fun release() {
+        isPlaying = false
+        silentTracker.release()
+        virtualCastVolume.setActive(false)
+        exclusiveOutput.close()
+        listeners.forEach { it.onReleased() }
+        listeners.clear()
+    }
+
+    override fun setVolume(volume: Float) {
+        // HW Volume is controlled directly via UAC Feature Unit 2
+    }
+
+    override fun isOffloadedPlayback(): Boolean = false
+    override fun getAudioSessionId(): Int = outputConfig.audioSessionId
+    override fun getSampleRate(): Int = usbConfig.sampleRate
+    override fun getBufferSizeInFrames(): Long = 4096L
+
+    override fun getPositionUs(): Long {
+        val hwPos = exclusiveOutput.getPositionUs()
+        if (hwPos > 0) return hwPos
+        if (isPlaying && playEpochNanos > 0) {
+            return (System.nanoTime() - playEpochNanos) / 1_000L
+        }
+        return pausedPositionUs
+    }
+
+    override fun getPlaybackParameters(): PlaybackParameters = playbackParams
+    override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
+        this.playbackParams = playbackParameters
+    }
+
+    override fun isStalled(): Boolean = false
+    override fun addListener(listener: AudioOutput.Listener) { listeners.addIfAbsent(listener) }
+    override fun removeListener(listener: AudioOutput.Listener) { listeners.remove(listener) }
+    override fun setOffloadDelayPadding(delayInFrames: Int, paddingInFrames: Int) {}
+    override fun setOffloadEndOfStream() {}
+    override fun setPlayerId(playerId: PlayerId) {}
+    override fun attachAuxEffect(effectId: Int) {}
+    override fun setAuxEffectSendLevel(level: Float) {}
+    override fun setPreferredDevice(deviceInfo: AudioDeviceInfo?) {}
 }
 
 /**
@@ -138,7 +316,6 @@ private class NativeDirectAudioOutput(
             nativeTrack.play()
         }
     }
-
 
     override fun stop() {
         isPlaying = false
@@ -207,15 +384,6 @@ private class NativeDirectAudioOutput(
 /**
  * Companion silent [android.media.AudioTrack] that maintains active audio playback registration
  * with Android's `AudioService` (via `PlayerBase` / `IAudioService.trackPlayer()`).
- *
- * When `NativeDirectAudioTrack` feeds PCM directly to hardware via `AUDIO_OUTPUT_FLAG_DIRECT`,
- * the standard Java `AudioTrack` is bypassed. Without an active Java `AudioTrack`, Android's
- * `AudioPlaybackMonitor` and `MediaSessionService` have no record that this app is outputting
- * audio, causing the system to route headset button events (`KEYCODE_HEADSETHOOK`, `KEYCODE_MEDIA_*`)
- * away to whatever background app last played standard audio.
- *
- * This lightweight static-buffer track runs silently (volume = 0) in the background whenever
- * native playback is active, ensuring proper media button routing and system audio state tracking.
  */
 private class SilentAudioTracker {
     private var audioTrack: android.media.AudioTrack? = null
@@ -248,43 +416,30 @@ private class SilentAudioTracker {
                 val silence = ByteArray(minBuf)
                 track.write(silence, 0, silence.size)
                 track.setLoopPoints(0, minBuf / 4, -1)
-                track.setVolume(0f)
                 audioTrack = track
             }
-            if (audioTrack?.playState != android.media.AudioTrack.PLAYSTATE_PLAYING) {
-                audioTrack?.play()
-            }
+            audioTrack?.play()
         } catch (t: Throwable) {
-            Log.w("NativeDirectAudio", "SilentAudioTracker play failed: ${t.message}")
+            Log.w(TAG, "SilentAudioTracker.play() failed: ${t.message}")
         }
     }
 
     fun pause() {
         try {
-            if (audioTrack?.playState == android.media.AudioTrack.PLAYSTATE_PLAYING) {
-                audioTrack?.pause()
-            }
-        } catch (t: Throwable) {
-            Log.w("NativeDirectAudio", "SilentAudioTracker pause failed: ${t.message}")
-        }
+            audioTrack?.pause()
+        } catch (_: Throwable) {}
     }
 
     fun stop() {
         try {
             audioTrack?.stop()
-        } catch (t: Throwable) {
-            Log.w("NativeDirectAudio", "SilentAudioTracker stop failed: ${t.message}")
-        }
+        } catch (_: Throwable) {}
     }
 
     fun release() {
         try {
-            audioTrack?.stop()
             audioTrack?.release()
             audioTrack = null
-        } catch (t: Throwable) {
-            Log.w("NativeDirectAudio", "SilentAudioTracker release failed: ${t.message}")
-        }
+        } catch (_: Throwable) {}
     }
 }
-
