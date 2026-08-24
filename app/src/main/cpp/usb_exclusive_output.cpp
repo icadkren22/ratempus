@@ -13,6 +13,7 @@
 #include <vector>
 #include <atomic>
 #include <time.h>
+#include "dsp_eq.h"
 
 #define TAG "UsbExclusiveNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -134,6 +135,7 @@ struct UsbAudioCtx {
 
     std::atomic<float> volume{0.005f};          // Software gain (applied in fill_urb)
     std::atomic<bool>  hw_volume_enabled{true}; // If true: Feature Unit 2 HW volume
+    tempus::DspEqualizer eq;
 
     uint32_t microframe_accum_q16; // 16.16 fixed point accumulator for 8000 Hz microframes
 
@@ -184,6 +186,44 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
         int got_frames = ring_read_frames(slot->pcm_buf + total_offset, req_frames, ctx->frame_size);
         int got_bytes = got_frames * ctx->frame_size;
         total_consumed_frames += got_frames;
+
+        // Apply DSP Equalizer (if enabled and not flat)
+        if (got_frames > 0 && ctx->eq.enabled.load(std::memory_order_relaxed) && !ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+            uint8_t* p = slot->pcm_buf + total_offset;
+            int total_samples = got_frames * ctx->channel_count;
+            if (ctx->bytes_per_sample == 4) {
+                int32_t* s32 = reinterpret_cast<int32_t*>(p);
+                for (int s = 0; s < total_samples; s++) {
+                    int ch = s % ctx->channel_count;
+                    double sample = static_cast<double>(s32[s]) / 2147483648.0;
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    s32[s] = static_cast<int32_t>(sample * 2147483647.0);
+                }
+            } else if (ctx->bytes_per_sample == 3) {
+                for (int s = 0; s < total_samples; s++) {
+                    int ch = s % ctx->channel_count;
+                    int32_t val = static_cast<int32_t>(p[3 * s] | (p[3 * s + 1] << 8) | (p[3 * s + 2] << 16));
+                    if (val & 0x800000) val |= 0xFF000000;
+                    double sample = static_cast<double>(val) / 8388608.0;
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    val = static_cast<int32_t>(sample * 8388607.0);
+                    p[3 * s + 0] = static_cast<uint8_t>(val & 0xFF);
+                    p[3 * s + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                    p[3 * s + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                }
+            } else if (ctx->bytes_per_sample == 2) {
+                int16_t* s16 = reinterpret_cast<int16_t*>(p);
+                for (int s = 0; s < total_samples; s++) {
+                    int ch = s % ctx->channel_count;
+                    double sample = static_cast<double>(s16[s]) / 32768.0;
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    s16[s] = static_cast<int16_t>(sample * 32767.0);
+                }
+            }
+        }
 
         // Apply software volume right at the 1ms URB stage when in SW mode (eliminates all buffer latency)
         if (got_frames > 0 && !hw_mode && sw_vol < 0.999f) {
@@ -421,6 +461,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeOpen(
     ctx->frame_size        = dac_channels * ctx->bytes_per_sample;
     ctx->volume.store(0.005f);
     ctx->hw_volume_enabled.store(true);
+    ctx->eq.set_sample_rate(ctx->sample_rate);
     ctx->microframe_accum_q16 = 0;
     ctx->frames_consumed.store(0);
 
@@ -766,6 +807,20 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeClose(
     close(ctx->fd);
     delete ctx;
     LOGI("nativeClose: completed — snd-usb-audio re-bound");
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqEnabled(
+        JNIEnv*, jclass, jlong h, jboolean enabled) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_enabled(enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqBand(
+        JNIEnv*, jclass, jlong h, jint band, jint level_mb) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_band_level(band, level_mb);
 }
 
 } // extern "C"

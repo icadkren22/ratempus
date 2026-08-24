@@ -224,12 +224,16 @@ static bool loadSymbols() {
     return true;
 }
 
+#include "dsp_eq.h"
+
 struct DirectAudioContext {
     void* mem = nullptr;
     uint32_t sampleRate = 0;
+    int channelCount = 2;
     int32_t inputEncoding = 0; // Android AudioFormat: 2=PCM_16, 4=FLOAT, 22=PCM_32
     audio_format_t outputFormat = AUDIO_FORMAT_PCM_32_BIT;
     std::vector<int32_t> convBuf;
+    tempus::DspEqualizer eq;
 };
 
 extern "C" {
@@ -254,8 +258,10 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeCreate(
     auto* ctx = new DirectAudioContext();
     ctx->mem = calloc(1, 4096);
     ctx->sampleRate = (uint32_t)sampleRate;
+    ctx->channelCount = channelCount;
     ctx->inputEncoding = encoding;
     ctx->outputFormat = (encoding == 2) ? AUDIO_FORMAT_PCM_16_BIT : AUDIO_FORMAT_PCM_32_BIT;
+    ctx->eq.set_sample_rate(ctx->sampleRate);
 
     AttributionSourceState attr; memset(&attr, 0, sizeof(attr));
     wp_callback cb;  memset(&cb,  0, sizeof(cb));
@@ -397,13 +403,44 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeWrite(
         ctx->convBuf.resize(n);
         const float* __restrict in = reinterpret_cast<const float*>(srcPtr);
         int32_t* __restrict out = ctx->convBuf.data();
-        for (int i = 0; i < n; i++) {
-            float f = in[i];
-            if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
-            out[i] = (int32_t)(f * 2147483647.f);
+        if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < n; i++) {
+                float f = in[i];
+                if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                out[i] = (int32_t)(f * 2147483647.f);
+            }
+        } else {
+            int ch = 0;
+            int numCh = (ctx->channelCount == 1) ? 1 : 2;
+            for (int i = 0; i < n; i++) {
+                double sample = static_cast<double>(in[i]);
+                sample = ctx->eq.process_sample(ch, sample);
+                if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                out[i] = static_cast<int32_t>(sample * 2147483647.0);
+                ch = (ch + 1) % numCh;
+            }
         }
         ssize_t r = s_write(ctx->mem, out, n * sizeof(int32_t), true);
         written = r > 0 ? (r / sizeof(int32_t)) * sizeof(float) : r;
+    } else if (ctx->inputEncoding == 2 && ctx->outputFormat == AUDIO_FORMAT_PCM_16_BIT) {
+        if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+            written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
+        } else {
+            const int n = sizeInBytes / sizeof(int16_t);
+            ctx->convBuf.resize(n);
+            const int16_t* __restrict in = reinterpret_cast<const int16_t*>(srcPtr);
+            int16_t* __restrict out = reinterpret_cast<int16_t*>(ctx->convBuf.data());
+            int ch = 0;
+            int numCh = (ctx->channelCount == 1) ? 1 : 2;
+            for (int i = 0; i < n; i++) {
+                double sample = static_cast<double>(in[i]) / 32768.0;
+                sample = ctx->eq.process_sample(ch, sample);
+                if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                out[i] = static_cast<int16_t>(sample * 32767.0);
+                ch = (ch + 1) % numCh;
+            }
+            written = s_write(ctx->mem, out, sizeInBytes, true);
+        }
     } else {
         written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
     }
@@ -431,6 +468,20 @@ JNIEXPORT jint JNICALL
 Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeGetSampleRate(JNIEnv*, jclass, jlong h) {
     auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
     return ctx ? (jint)ctx->sampleRate : 0;
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqEnabled(
+        JNIEnv*, jclass, jlong h, jboolean enabled) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_enabled(enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqBand(
+        JNIEnv*, jclass, jlong h, jint band, jint level_mb) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_band_level(band, level_mb);
 }
 
 } // extern "C"

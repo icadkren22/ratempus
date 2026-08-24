@@ -8,6 +8,7 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.util.Log
+import com.eddyizm.tempus.util.Preferences
 import java.nio.ByteBuffer
 
 private const val TAG = "UsbExclusiveOutput"
@@ -127,6 +128,14 @@ class UsbExclusiveOutput(private val context: Context) {
             return false
         }
 
+        activeOutput = this
+        val eqEnabled = Preferences.isEqualizerEnabled()
+        nativeSetEqEnabled(nativeHandle, eqEnabled)
+        val savedLevels = Preferences.getEqualizerBandLevels(5)
+        for (i in 0 until 5) {
+            nativeSetEqBand(nativeHandle, i, savedLevels[i].toInt())
+        }
+
         Log.i(TAG, "USB Exclusive streaming started: ${config.sampleRate}Hz ${config.bitDepth}bit via iface=${config.streamingIface} alt=${config.altSetting}")
         return true
     }
@@ -179,6 +188,7 @@ class UsbExclusiveOutput(private val context: Context) {
 
     fun close() {
         if (nativeHandle != 0L) {
+            if (activeOutput === this) activeOutput = null
             nativeClose(nativeHandle)
             nativeHandle = 0L
         }
@@ -200,12 +210,27 @@ class UsbExclusiveOutput(private val context: Context) {
     private external fun nativeGetPositionUs(handle: Long): Long
     private external fun nativeSetVolume(handle: Long, volume: Float)
     private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short, swGain: Float)
+    private external fun nativeSetEqEnabled(handle: Long, enabled: Boolean)
+    private external fun nativeSetEqBand(handle: Long, band: Int, levelMb: Int)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)
 
     companion object {
         init {
             System.loadLibrary("directaudio")
+        }
+
+        @Volatile
+        private var activeOutput: UsbExclusiveOutput? = null
+
+        @JvmStatic
+        fun setNativeEqEnabled(enabled: Boolean) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqEnabled(it.nativeHandle, enabled) }
+        }
+
+        @JvmStatic
+        fun setNativeEqBand(band: Int, levelMb: Int) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqBand(it.nativeHandle, band, levelMb) }
         }
     }
 }

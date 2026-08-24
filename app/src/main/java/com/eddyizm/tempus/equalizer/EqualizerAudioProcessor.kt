@@ -8,6 +8,7 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import com.eddyizm.tempus.util.Preferences
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.pow
@@ -199,8 +200,9 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        if (!isEnabled || isFlat) {
-            // Fast direct pass-through
+        val isDirectHdOrUsbEx = Preferences.isDirectHdEnabled() || Preferences.isUsbDacExclusiveEnabled()
+        if (!isEnabled || isFlat || isDirectHdOrUsbEx) {
+            // Fast direct pass-through (Vanilla AudioTrack uses Kotlin DSP; Direct HD & USB Exclusive use native C++ DSP)
             val outputBuffer = replaceOutputBuffer(remaining)
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()

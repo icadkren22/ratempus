@@ -83,6 +83,25 @@ class NativeDirectAudioTrack(
 
         @JvmStatic
         external fun nativeGetSampleRate(handle: Long): Int
+
+        @JvmStatic
+        external fun nativeSetEqEnabled(handle: Long, enabled: Boolean)
+
+        @JvmStatic
+        external fun nativeSetEqBand(handle: Long, band: Int, levelMb: Int)
+
+        @Volatile
+        private var activeTrack: NativeDirectAudioTrack? = null
+
+        @JvmStatic
+        fun setNativeEqEnabled(enabled: Boolean) {
+            activeTrack?.let { if (it.isValid) nativeSetEqEnabled(it.nativeHandle, enabled) }
+        }
+
+        @JvmStatic
+        fun setNativeEqBand(band: Int, levelMb: Int) {
+            activeTrack?.let { if (it.isValid) nativeSetEqBand(it.nativeHandle, band, levelMb) }
+        }
     }
 
     private var nativeHandle: Long = 0L
@@ -90,6 +109,15 @@ class NativeDirectAudioTrack(
     init {
         if (isSupported()) {
             nativeHandle = nativeCreate(sampleRate, channelCount, encoding, bufferCapacityFrames)
+            if (isValid) {
+                activeTrack = this
+                val enabled = Preferences.isEqualizerEnabled()
+                nativeSetEqEnabled(nativeHandle, enabled)
+                val savedLevels = Preferences.getEqualizerBandLevels(5)
+                for (i in 0 until 5) {
+                    nativeSetEqBand(nativeHandle, i, savedLevels[i].toInt())
+                }
+            }
         }
     }
 
@@ -103,7 +131,11 @@ class NativeDirectAudioTrack(
     fun stop(): Boolean = if (isValid) nativeStop(nativeHandle) else false
 
     fun release() {
-        if (isValid) { nativeClose(nativeHandle); nativeHandle = 0L }
+        if (isValid) {
+            if (activeTrack === this) activeTrack = null
+            nativeClose(nativeHandle)
+            nativeHandle = 0L
+        }
     }
 
     fun write(byteBuffer: ByteBuffer, sizeInBytes: Int, timeoutNanos: Long = 0L): Int {
