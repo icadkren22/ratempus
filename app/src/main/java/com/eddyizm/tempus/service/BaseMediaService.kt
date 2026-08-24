@@ -32,6 +32,7 @@ import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
 import androidx.media3.extractor.metadata.vorbis.VorbisComment
 import com.eddyizm.tempus.equalizer.BuiltinBackend
+import com.eddyizm.tempus.equalizer.EqualizerAudioProcessor
 import com.eddyizm.tempus.equalizer.EqualizerBackend
 import com.eddyizm.tempus.equalizer.EqualizerManager
 import com.eddyizm.tempus.equalizer.ExternalBackend
@@ -1039,7 +1040,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
             ): AudioSink {
                 val floatOutput = enableFloatOutput || (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && Preferences.isDirectHdEnabled())
                 return DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(ReplayGainUtil.getAudioProcessor()))
+                    .setAudioProcessors(arrayOf(ReplayGainUtil.getAudioProcessor(), EqualizerAudioProcessor.getInstance()))
                     .setEnableFloatOutput(floatOutput)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .setAudioOutputProvider(NativeDirectAudioOutputProvider(context))

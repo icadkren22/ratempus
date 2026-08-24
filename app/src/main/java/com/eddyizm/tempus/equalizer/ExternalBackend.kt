@@ -4,9 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
 
-class ExternalBackend: EqualizerBackend {
+class ExternalBackend : EqualizerBackend {
 
     override fun attach(audioSessionId: Int, context: Context): Boolean {
+        EqualizerAudioProcessor.getInstance().isEnabled = false
         if (audioSessionId == 0) return false
 
         val open = Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
@@ -18,6 +19,7 @@ class ExternalBackend: EqualizerBackend {
     }
 
     override fun release(audioSessionId: Int, context: Context) {
+        EqualizerAudioProcessor.getInstance().isEnabled = false
         if (audioSessionId == 0) {
             return
         }

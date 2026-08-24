@@ -8,11 +8,13 @@
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <algorithm>
 #include <vector>
 #include <atomic>
 #include <time.h>
+#include "dsp_eq.h"
 
 #define TAG "UsbExclusiveNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -132,8 +134,10 @@ struct UsbAudioCtx {
     int      bytes_per_sample;  // DAC bytes per sample: 2 for 16-bit, 3 for 24-bit, 4 for 32-bit
     int      frame_size;        // channel_count * bytes_per_sample (DAC stereo frame size)
 
-    std::atomic<float> volume{0.005f};          // Software gain (applied in fill_urb)
-    std::atomic<bool>  hw_volume_enabled{true}; // If true: Feature Unit 2 HW volume
+    std::atomic<float>    volume{0.005f};            // Software gain (applied in nativeWrite)
+    std::atomic<bool>     hw_volume_enabled{true};   // If true: Feature Unit 2 HW volume
+    std::atomic<uint64_t> dac_reset_at_frame{0};     // When >0: reset DAC to 0dB once frames_consumed reaches this value
+    tempus::DspEqualizer eq;
 
     uint32_t microframe_accum_q16; // 16.16 fixed point accumulator for 8000 Hz microframes
 
@@ -144,6 +148,7 @@ struct UsbAudioCtx {
     std::atomic<bool> running{false};
     pthread_t stream_thread;
     std::vector<UrbSlot*> urb_slots;
+    std::vector<uint8_t>  conv_buf;
 };
 
 // Calculates exact frames for next High-Speed microframe using 16.16 fixed-point arithmetic
@@ -154,6 +159,9 @@ static inline int next_microframe_frames(uint32_t sample_rate, uint32_t& accum_q
     accum_q16 &= 0xFFFF;
     return frames;
 }
+
+static void set_hardware_volume(int fd, uint8_t fu_id, uint8_t ac_iface, int16_t vol_db_256);
+static void set_hardware_mute(int fd, uint8_t fu_id, uint8_t ac_iface, uint8_t mute);
 
 static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     struct usbdevfs_urb* u = slot->urb;
@@ -168,8 +176,6 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     int total_offset = 0;
     int total_consumed_frames = 0;
 
-    bool hw_mode = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
-    float sw_vol = ctx->volume.load(std::memory_order_relaxed);
 
     for (int i = 0; i < PACKETS_PER_URB; i++) {
         int req_frames = next_microframe_frames(ctx->sample_rate, ctx->microframe_accum_q16);
@@ -185,31 +191,7 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
         int got_bytes = got_frames * ctx->frame_size;
         total_consumed_frames += got_frames;
 
-        // Apply software volume right at the 1ms URB stage when in SW mode (eliminates all buffer latency)
-        if (got_frames > 0 && !hw_mode && sw_vol < 0.999f) {
-            uint8_t* p = slot->pcm_buf + total_offset;
-            int total_samples = got_frames * ctx->channel_count;
-            if (ctx->bytes_per_sample == 4) {
-                int32_t* s32 = reinterpret_cast<int32_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    s32[s] = static_cast<int32_t>(s32[s] * sw_vol);
-                }
-            } else if (ctx->bytes_per_sample == 3) {
-                for (int s = 0; s < total_samples; s++) {
-                    int32_t val = static_cast<int32_t>(p[3 * s] | (p[3 * s + 1] << 8) | (p[3 * s + 2] << 16));
-                    if (val & 0x800000) val |= 0xFF000000;
-                    val = static_cast<int32_t>(val * sw_vol);
-                    p[3 * s + 0] = static_cast<uint8_t>(val & 0xFF);
-                    p[3 * s + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    p[3 * s + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                }
-            } else if (ctx->bytes_per_sample == 2) {
-                int16_t* s16 = reinterpret_cast<int16_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    s16[s] = static_cast<int16_t>(s16[s] * sw_vol);
-                }
-            }
-        }
+
 
         if (got_bytes < pkt_len) {
             // Fill remainder with exact zeroes (silence)
@@ -220,10 +202,19 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     u->buffer_length = total_offset;
 
     if (total_consumed_frames > 0) {
-        ctx->frames_consumed.fetch_add(total_consumed_frames, std::memory_order_relaxed);
+        uint64_t consumed = ctx->frames_consumed.fetch_add(total_consumed_frames, std::memory_order_relaxed)
+                            + total_consumed_frames;
         pthread_mutex_lock(&ctx->ring_mutex);
         pthread_cond_signal(&ctx->ring_cv);
         pthread_mutex_unlock(&ctx->ring_mutex);
+
+        // Deferred DAC reset: switch DAC to 0dB only once old HW-volume frames have drained
+        uint64_t reset_at = ctx->dac_reset_at_frame.load(std::memory_order_relaxed);
+        if (reset_at > 0 && consumed >= reset_at) {
+            set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
+            ctx->dac_reset_at_frame.store(0, std::memory_order_relaxed);
+            LOGI("fill_urb: deferred DAC reset to 0dB at frame %" PRIu64, consumed);
+        }
     }
 }
 
@@ -421,6 +412,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeOpen(
     ctx->frame_size        = dac_channels * ctx->bytes_per_sample;
     ctx->volume.store(0.005f);
     ctx->hw_volume_enabled.store(true);
+    ctx->eq.set_sample_rate(ctx->sample_rate);
     ctx->microframe_accum_q16 = 0;
     ctx->frames_consumed.store(0);
 
@@ -514,156 +506,230 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
     }
     pthread_mutex_unlock(&ctx->ring_mutex);
 
-    int frames_written = 0;
+    // Prepare destination buffer in conv_buf (avoids dynamic heap allocation per write)
+    int dac_bytes_needed = total_input_frames * ctx->frame_size;
+    if (ctx->conv_buf.size() < static_cast<size_t>(dac_bytes_needed)) {
+        ctx->conv_buf.resize(dac_bytes_needed);
+    }
+    uint8_t* dst_bytes = ctx->conv_buf.data();
 
-    // Direct, bit-perfect PCM writing to ring buffer (no scaling here; scaled in fill_urb if SW mode)
-    if (ctx->src_channel_count == 1) {
-        // ─── MONO SOURCE (1 Channel -> 2 Channels Stereo Expansion) ─────────────
-        if (ctx->src_encoding == 2) {
-            // Source: Int16 Mono
-            const int16_t* s16 = reinterpret_cast<const int16_t*>(src_bytes);
-            if (ctx->bytes_per_sample == 4) {
-                // DAC: 32-bit Stereo
-                std::vector<int32_t> converted(total_input_frames * 2);
-                for (int i = 0; i < total_input_frames; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 16;
-                    converted[2 * i + 0] = val; // Left
-                    converted[2 * i + 1] = val; // Right
+    bool eq_active  = ctx->eq.enabled.load(std::memory_order_relaxed)
+                   && !ctx->eq.is_flat.load(std::memory_order_relaxed);
+    bool hw_mode    = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
+    float sw_vol    = ctx->volume.load(std::memory_order_relaxed);
+    bool vol_active = !hw_mode && sw_vol < 0.999f;
+    bool dsp_active = eq_active || vol_active;
+    double vol_scale = vol_active ? static_cast<double>(sw_vol) : 1.0;
+
+    int num_src_ch = ctx->src_channel_count;
+    bool is_mono = (num_src_ch == 1);
+    bool is_float = (ctx->src_encoding != 2);
+
+    const float* src_f = is_float ? reinterpret_cast<const float*>(src_bytes) : nullptr;
+    const int16_t* src_s16 = !is_float ? reinterpret_cast<const int16_t*>(src_bytes) : nullptr;
+
+    if (!dsp_active) {
+        // ─── FAST BIT-PERFECT BYPASS PATH (NO DSP) ───────────────────────────
+        if (is_mono) {
+            // Mono Source -> Stereo Expansion
+            if (is_float) {
+                if (ctx->bytes_per_sample == 4) {
+                    int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
+                    for (int i = 0; i < total_input_frames; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        int32_t val = static_cast<int32_t>(f * 2147483647.f);
+                        dst32[2 * i + 0] = val;
+                        dst32[2 * i + 1] = val;
+                    }
+                } else if (ctx->bytes_per_sample == 3) {
+                    for (int i = 0; i < total_input_frames; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        int32_t val = static_cast<int32_t>(f * 8388607.f);
+                        dst_bytes[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                        dst_bytes[6 * i + 3] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[6 * i + 4] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[6 * i + 5] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    }
+                } else {
+                    int16_t* dst16 = reinterpret_cast<int16_t*>(dst_bytes);
+                    for (int i = 0; i < total_input_frames; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        int16_t val = static_cast<int16_t>(f * 32767.f);
+                        dst16[2 * i + 0] = val;
+                        dst16[2 * i + 1] = val;
+                    }
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
-            } else if (ctx->bytes_per_sample == 3) {
-                // DAC: 24-bit Stereo
-                std::vector<uint8_t> converted(total_input_frames * 2 * 3);
-                for (int i = 0; i < total_input_frames; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 8;
-                    converted[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
-                    converted[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                    converted[6 * i + 3] = static_cast<uint8_t>(val & 0xFF);
-                    converted[6 * i + 4] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[6 * i + 5] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                }
-                frames_written = ring_write_frames(converted.data(), total_input_frames, ctx->frame_size);
             } else {
-                // DAC: 16-bit Stereo
-                std::vector<int16_t> converted(total_input_frames * 2);
-                for (int i = 0; i < total_input_frames; i++) {
-                    converted[2 * i + 0] = s16[i];
-                    converted[2 * i + 1] = s16[i];
+                // Int16 Mono
+                if (ctx->bytes_per_sample == 4) {
+                    int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
+                    for (int i = 0; i < total_input_frames; i++) {
+                        int32_t val = static_cast<int32_t>(src_s16[i]) << 16;
+                        dst32[2 * i + 0] = val;
+                        dst32[2 * i + 1] = val;
+                    }
+                } else if (ctx->bytes_per_sample == 3) {
+                    for (int i = 0; i < total_input_frames; i++) {
+                        int32_t val = static_cast<int32_t>(src_s16[i]) << 8;
+                        dst_bytes[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                        dst_bytes[6 * i + 3] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[6 * i + 4] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[6 * i + 5] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    }
+                } else {
+                    int16_t* dst16 = reinterpret_cast<int16_t*>(dst_bytes);
+                    for (int i = 0; i < total_input_frames; i++) {
+                        int16_t val = src_s16[i];
+                        dst16[2 * i + 0] = val;
+                        dst16[2 * i + 1] = val;
+                    }
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             }
         } else {
-            // Source: Float32 Mono
-            const float* src_float = reinterpret_cast<const float*>(src_bytes);
-            if (ctx->bytes_per_sample == 4) {
-                // DAC: 32-bit Stereo
-                std::vector<int32_t> converted(total_input_frames * 2);
-                for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    int32_t val = static_cast<int32_t>(f * 2147483647.0f);
-                    converted[2 * i + 0] = val; // Left
-                    converted[2 * i + 1] = val; // Right
+            // Stereo Source
+            int total_samples = total_input_frames * 2;
+            if (is_float) {
+                if (ctx->bytes_per_sample == 4) {
+                    int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
+                    for (int i = 0; i < total_samples; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        dst32[i] = static_cast<int32_t>(f * 2147483647.f);
+                    }
+                } else if (ctx->bytes_per_sample == 3) {
+                    for (int i = 0; i < total_samples; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        int32_t val = static_cast<int32_t>(f * 8388607.f);
+                        dst_bytes[3 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[3 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[3 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    }
+                } else {
+                    int16_t* dst16 = reinterpret_cast<int16_t*>(dst_bytes);
+                    for (int i = 0; i < total_samples; i++) {
+                        float f = src_f[i];
+                        if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                        dst16[i] = static_cast<int16_t>(f * 32767.f);
+                    }
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
-            } else if (ctx->bytes_per_sample == 3) {
-                // DAC: 24-bit Stereo
-                std::vector<uint8_t> converted(total_input_frames * 2 * 3);
-                for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    int32_t val = static_cast<int32_t>(f * 8388607.0f);
-                    converted[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
-                    converted[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                    converted[6 * i + 3] = static_cast<uint8_t>(val & 0xFF);
-                    converted[6 * i + 4] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[6 * i + 5] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                }
-                frames_written = ring_write_frames(converted.data(), total_input_frames, ctx->frame_size);
             } else {
-                // DAC: 16-bit Stereo
-                std::vector<int16_t> converted(total_input_frames * 2);
-                for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    int32_t val = static_cast<int32_t>(f * 32767.0f);
-                    converted[2 * i + 0] = val;
-                    converted[2 * i + 1] = val;
+                // Int16 Stereo
+                if (ctx->bytes_per_sample == 4) {
+                    int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
+                    for (int i = 0; i < total_samples; i++) {
+                        dst32[i] = static_cast<int32_t>(src_s16[i]) << 16;
+                    }
+                } else if (ctx->bytes_per_sample == 3) {
+                    for (int i = 0; i < total_samples; i++) {
+                        int32_t val = static_cast<int32_t>(src_s16[i]) << 8;
+                        dst_bytes[3 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                        dst_bytes[3 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                        dst_bytes[3 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    }
+                } else {
+                    dst_bytes = const_cast<uint8_t*>(src_bytes); // direct pass-through pointer!
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             }
         }
     } else {
-        // ─── STEREO SOURCE (2 Channels -> 2 Channels Pass-through) ──────────────
-        int total_samples = total_input_frames * 2;
-        if (ctx->src_encoding == 2) {
-            // Source: Int16 Stereo
-            const int16_t* s16 = reinterpret_cast<const int16_t*>(src_bytes);
-            if (ctx->bytes_per_sample == 4) {
-                // DAC: 32-bit Stereo
-                std::vector<int32_t> converted(total_samples);
-                for (int i = 0; i < total_samples; i++) {
-                    converted[i] = static_cast<int32_t>(s16[i]) << 16;
+        // ─── ACTIVE DSP PATH (64-bit Double EQ + SW Volume in Single Pass) ───
+        if (is_mono) {
+            // Mono Source -> Stereo Expansion
+            for (int i = 0; i < total_input_frames; i++) {
+                double s = is_float ? static_cast<double>(src_f[i])
+                                    : (static_cast<double>(src_s16[i]) / 32768.0);
+                if (eq_active) {
+                    s = ctx->eq.process_sample(0, s);
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
-            } else if (ctx->bytes_per_sample == 3) {
-                // DAC: 24-bit Stereo
-                std::vector<uint8_t> converted(total_samples * 3);
-                for (int i = 0; i < total_samples; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 8;
-                    converted[i * 3 + 0] = static_cast<uint8_t>(val & 0xFF);
-                    converted[i * 3 + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[i * 3 + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                if (vol_active) {
+                    s *= vol_scale;
                 }
-                frames_written = ring_write_frames(converted.data(), total_input_frames, ctx->frame_size);
-            } else {
-                // DAC: 16-bit Stereo
-                frames_written = ring_write_frames(src_bytes, total_input_frames, ctx->frame_size);
+                if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+
+                if (ctx->bytes_per_sample == 4) {
+                    int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
+                    int32_t val = static_cast<int32_t>(s * 2147483647.0);
+                    dst32[2 * i + 0] = val;
+                    dst32[2 * i + 1] = val;
+                } else if (ctx->bytes_per_sample == 3) {
+                    int32_t val = static_cast<int32_t>(s * 8388607.0);
+                    dst_bytes[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                    dst_bytes[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                    dst_bytes[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    dst_bytes[6 * i + 3] = static_cast<uint8_t>(val & 0xFF);
+                    dst_bytes[6 * i + 4] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                    dst_bytes[6 * i + 5] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                } else {
+                    int16_t* dst16 = reinterpret_cast<int16_t*>(dst_bytes);
+                    int16_t val = static_cast<int16_t>(s * 32767.0);
+                    dst16[2 * i + 0] = val;
+                    dst16[2 * i + 1] = val;
+                }
             }
         } else {
-            // Source: Float32 Stereo
-            const float* src_float = reinterpret_cast<const float*>(src_bytes);
+            // Stereo Source
+            int total_samples = total_input_frames * 2;
+            int ch = 0;
             if (ctx->bytes_per_sample == 4) {
-                // DAC: 32-bit Stereo
-                std::vector<int32_t> converted(total_samples);
+                int32_t* dst32 = reinterpret_cast<int32_t*>(dst_bytes);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    converted[i] = static_cast<int32_t>(f * 2147483647.0f);
+                    double s = is_float ? static_cast<double>(src_f[i])
+                                        : (static_cast<double>(src_s16[i]) / 32768.0);
+                    if (eq_active) {
+                        s = ctx->eq.process_sample(ch, s);
+                    }
+                    if (vol_active) {
+                        s *= vol_scale;
+                    }
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    dst32[i] = static_cast<int32_t>(s * 2147483647.0);
+                    ch = (ch + 1) % 2;
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             } else if (ctx->bytes_per_sample == 3) {
-                // DAC: 24-bit Stereo
-                std::vector<uint8_t> converted(total_samples * 3);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    int32_t val = static_cast<int32_t>(f * 8388607.0f);
-                    converted[i * 3 + 0] = static_cast<uint8_t>(val & 0xFF);
-                    converted[i * 3 + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    converted[i * 3 + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    double s = is_float ? static_cast<double>(src_f[i])
+                                        : (static_cast<double>(src_s16[i]) / 32768.0);
+                    if (eq_active) {
+                        s = ctx->eq.process_sample(ch, s);
+                    }
+                    if (vol_active) {
+                        s *= vol_scale;
+                    }
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    int32_t val = static_cast<int32_t>(s * 8388607.0);
+                    dst_bytes[3 * i + 0] = static_cast<uint8_t>(val & 0xFF);
+                    dst_bytes[3 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
+                    dst_bytes[3 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
+                    ch = (ch + 1) % 2;
                 }
-                frames_written = ring_write_frames(converted.data(), total_input_frames, ctx->frame_size);
             } else {
-                // DAC: 16-bit Stereo
-                std::vector<int16_t> converted(total_samples);
+                int16_t* dst16 = reinterpret_cast<int16_t*>(dst_bytes);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
-                    if (f > 1.0f)  f = 1.0f;
-                    if (f < -1.0f) f = -1.0f;
-                    converted[i] = static_cast<int32_t>(f * 32767.0f);
+                    double s = is_float ? static_cast<double>(src_f[i])
+                                        : (static_cast<double>(src_s16[i]) / 32768.0);
+                    if (eq_active) {
+                        s = ctx->eq.process_sample(ch, s);
+                    }
+                    if (vol_active) {
+                        s *= vol_scale;
+                    }
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    dst16[i] = static_cast<int16_t>(s * 32767.0);
+                    ch = (ch + 1) % 2;
                 }
-                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             }
         }
     }
+
+    int frames_written = ring_write_frames(dst_bytes, total_input_frames, ctx->frame_size);
 
     if (arr && elems) env->ReleaseByteArrayElements(arr, elems, JNI_ABORT);
     return frames_written * src_frame_size;
@@ -701,12 +767,18 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetHwVolume(
         set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
         LOGI("nativeSetHwVolume: HW mode ON vol_db_256=%d (%.2f dB)", vol_db_256, (float)vol_db_256 / 256.0f);
     } else {
+        // Store SW gain and flip mode — nativeWrite will immediately apply SW volume to new frames
         ctx->volume.store(sw_gain, std::memory_order_relaxed);
         ctx->hw_volume_enabled.store(false, std::memory_order_relaxed);
-        // Reset DAC hardware to 0 dB — software gain in fill_urb takes over immediately
-        set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
-        set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
-        LOGI("nativeSetHwVolume: HW mode OFF — DAC reset to 0dB, SW gain active (%.6f)", sw_gain);
+
+        // Schedule deferred DAC reset: reset to 0dB only after old HW-volume frames drain from ring buffer
+        uint64_t consumed = ctx->frames_consumed.load(std::memory_order_relaxed);
+        int ring_used_bytes = RING_SIZE - 1 - ring_free_bytes();
+        uint64_t ring_used_frames = (ctx->frame_size > 0) ? (ring_used_bytes / ctx->frame_size) : 0;
+        ctx->dac_reset_at_frame.store(consumed + ring_used_frames + 1, std::memory_order_relaxed);
+
+        LOGI("nativeSetHwVolume: HW mode OFF — deferred DAC reset at frame %" PRIu64 " (ring ~%" PRIu64 " frames), SW gain=%.6f",
+             consumed + ring_used_frames + 1, ring_used_frames, sw_gain);
     }
 }
 
@@ -766,6 +838,20 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeClose(
     close(ctx->fd);
     delete ctx;
     LOGI("nativeClose: completed — snd-usb-audio re-bound");
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqEnabled(
+        JNIEnv*, jclass, jlong h, jboolean enabled) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_enabled(enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqBand(
+        JNIEnv*, jclass, jlong h, jint band, jint level_mb) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_band_level(band, level_mb);
 }
 
 } // extern "C"
