@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <algorithm>
 #include <vector>
@@ -133,8 +134,9 @@ struct UsbAudioCtx {
     int      bytes_per_sample;  // DAC bytes per sample: 2 for 16-bit, 3 for 24-bit, 4 for 32-bit
     int      frame_size;        // channel_count * bytes_per_sample (DAC stereo frame size)
 
-    std::atomic<float> volume{0.005f};          // Software gain (applied in fill_urb)
-    std::atomic<bool>  hw_volume_enabled{true}; // If true: Feature Unit 2 HW volume
+    std::atomic<float>    volume{0.005f};            // Software gain (applied in nativeWrite)
+    std::atomic<bool>     hw_volume_enabled{true};   // If true: Feature Unit 2 HW volume
+    std::atomic<uint64_t> dac_reset_at_frame{0};     // When >0: reset DAC to 0dB once frames_consumed reaches this value
     tempus::DspEqualizer eq;
 
     uint32_t microframe_accum_q16; // 16.16 fixed point accumulator for 8000 Hz microframes
@@ -157,6 +159,9 @@ static inline int next_microframe_frames(uint32_t sample_rate, uint32_t& accum_q
     return frames;
 }
 
+static void set_hardware_volume(int fd, uint8_t fu_id, uint8_t ac_iface, int16_t vol_db_256);
+static void set_hardware_mute(int fd, uint8_t fu_id, uint8_t ac_iface, uint8_t mute);
+
 static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     struct usbdevfs_urb* u = slot->urb;
     memset(u, 0, sizeof(struct usbdevfs_urb));
@@ -170,8 +175,6 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     int total_offset = 0;
     int total_consumed_frames = 0;
 
-    bool hw_mode = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
-    float sw_vol = ctx->volume.load(std::memory_order_relaxed);
 
     for (int i = 0; i < PACKETS_PER_URB; i++) {
         int req_frames = next_microframe_frames(ctx->sample_rate, ctx->microframe_accum_q16);
@@ -225,31 +228,7 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
             }
         }
 
-        // Apply software volume right at the 1ms URB stage when in SW mode (eliminates all buffer latency)
-        if (got_frames > 0 && !hw_mode && sw_vol < 0.999f) {
-            uint8_t* p = slot->pcm_buf + total_offset;
-            int total_samples = got_frames * ctx->channel_count;
-            if (ctx->bytes_per_sample == 4) {
-                int32_t* s32 = reinterpret_cast<int32_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    s32[s] = static_cast<int32_t>(s32[s] * sw_vol);
-                }
-            } else if (ctx->bytes_per_sample == 3) {
-                for (int s = 0; s < total_samples; s++) {
-                    int32_t val = static_cast<int32_t>(p[3 * s] | (p[3 * s + 1] << 8) | (p[3 * s + 2] << 16));
-                    if (val & 0x800000) val |= 0xFF000000;
-                    val = static_cast<int32_t>(val * sw_vol);
-                    p[3 * s + 0] = static_cast<uint8_t>(val & 0xFF);
-                    p[3 * s + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    p[3 * s + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                }
-            } else if (ctx->bytes_per_sample == 2) {
-                int16_t* s16 = reinterpret_cast<int16_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    s16[s] = static_cast<int16_t>(s16[s] * sw_vol);
-                }
-            }
-        }
+
 
         if (got_bytes < pkt_len) {
             // Fill remainder with exact zeroes (silence)
@@ -260,10 +239,19 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
     u->buffer_length = total_offset;
 
     if (total_consumed_frames > 0) {
-        ctx->frames_consumed.fetch_add(total_consumed_frames, std::memory_order_relaxed);
+        uint64_t consumed = ctx->frames_consumed.fetch_add(total_consumed_frames, std::memory_order_relaxed)
+                            + total_consumed_frames;
         pthread_mutex_lock(&ctx->ring_mutex);
         pthread_cond_signal(&ctx->ring_cv);
         pthread_mutex_unlock(&ctx->ring_mutex);
+
+        // Deferred DAC reset: switch DAC to 0dB only once old HW-volume frames have drained
+        uint64_t reset_at = ctx->dac_reset_at_frame.load(std::memory_order_relaxed);
+        if (reset_at > 0 && consumed >= reset_at) {
+            set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
+            ctx->dac_reset_at_frame.store(0, std::memory_order_relaxed);
+            LOGI("fill_urb: deferred DAC reset to 0dB at frame %" PRIu64, consumed);
+        }
     }
 }
 
@@ -557,7 +545,18 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
 
     int frames_written = 0;
 
-    // Direct, bit-perfect PCM writing to ring buffer (no scaling here; scaled in fill_urb if SW mode)
+    // Apply SW volume on Float32 input before bit-depth conversion (HW mode: skip, unity gain)
+    bool hw_mode = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
+    float sw_vol = ctx->volume.load(std::memory_order_relaxed);
+    if (!hw_mode && ctx->src_encoding != 2 && sw_vol < 0.999f) {
+        float* f_in = const_cast<float*>(reinterpret_cast<const float*>(src_bytes));
+        int total_samples = total_input_frames * ctx->src_channel_count;
+        for (int i = 0; i < total_samples; i++) {
+            f_in[i] *= sw_vol;
+        }
+    }
+
+    // Convert Float32/Int16 PCM into DAC bit-depth and write into ring buffer
     if (ctx->src_channel_count == 1) {
         // ─── MONO SOURCE (1 Channel -> 2 Channels Stereo Expansion) ─────────────
         if (ctx->src_encoding == 2) {
@@ -742,12 +741,18 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetHwVolume(
         set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
         LOGI("nativeSetHwVolume: HW mode ON vol_db_256=%d (%.2f dB)", vol_db_256, (float)vol_db_256 / 256.0f);
     } else {
+        // Store SW gain and flip mode — nativeWrite will immediately apply SW volume to new frames
         ctx->volume.store(sw_gain, std::memory_order_relaxed);
         ctx->hw_volume_enabled.store(false, std::memory_order_relaxed);
-        // Reset DAC hardware to 0 dB — software gain in fill_urb takes over immediately
-        set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
-        set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
-        LOGI("nativeSetHwVolume: HW mode OFF — DAC reset to 0dB, SW gain active (%.6f)", sw_gain);
+
+        // Schedule deferred DAC reset: reset to 0dB only after old HW-volume frames drain from ring buffer
+        uint64_t consumed = ctx->frames_consumed.load(std::memory_order_relaxed);
+        int ring_used_bytes = RING_SIZE - 1 - ring_free_bytes();
+        uint64_t ring_used_frames = (ctx->frame_size > 0) ? (ring_used_bytes / ctx->frame_size) : 0;
+        ctx->dac_reset_at_frame.store(consumed + ring_used_frames + 1, std::memory_order_relaxed);
+
+        LOGI("nativeSetHwVolume: HW mode OFF — deferred DAC reset at frame %" PRIu64 " (ring ~%" PRIu64 " frames), SW gain=%.6f",
+             consumed + ring_used_frames + 1, ring_used_frames, sw_gain);
     }
 }
 

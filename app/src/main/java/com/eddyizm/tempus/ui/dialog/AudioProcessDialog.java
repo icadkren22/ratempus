@@ -178,6 +178,29 @@ public class AudioProcessDialog extends DialogFragment {
         }
         bind.pipelineDspProcessingVal.setText(rgString);
 
+        boolean isUsbEx = AudioOutputTracker.isUsbExclusiveActive(requireContext());
+        boolean eqEnabled = Preferences.isEqualizerEnabled();
+        if (!eqEnabled) {
+            bind.pipelineDspEqualizerVal.setText("Disabled");
+        } else {
+            short[] bandLevels = Preferences.getEqualizerBandLevels((short) 5);
+            boolean isFlat = true;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < bandLevels.length; i++) {
+                if (bandLevels[i] != 0) isFlat = false;
+                if (i > 0) sb.append(", ");
+                float db = bandLevels[i] / 100.0f;
+                if (db > 0) sb.append("+");
+                sb.append(String.format(Locale.US, "%.1f", db));
+            }
+
+            if (isFlat) {
+                bind.pipelineDspEqualizerVal.setText("Flat (0.0 dB • Bit-perfect)");
+            } else {
+                bind.pipelineDspEqualizerVal.setText("Active (" + sb.toString() + " dB)");
+            }
+        }
+
         int sinkRate = AudioOutputTracker.getCurrentSampleRate();
         if (sinkRate > 0 && decRate > 0) {
             if (sinkRate == decRate) {
@@ -193,7 +216,6 @@ public class AudioProcessDialog extends DialogFragment {
         // STAGE 4: Output Driver
         // ==========================================
         int rateToDisplay = (sinkRate > 0) ? sinkRate : decRate;
-        boolean isUsbEx = AudioOutputTracker.isUsbExclusiveActive(requireContext());
 
         if (isUsbEx) {
             bind.pipelineDriverNameVal.setText("UAC2 usbfs driver");
