@@ -190,44 +190,6 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
         int got_bytes = got_frames * ctx->frame_size;
         total_consumed_frames += got_frames;
 
-        // Apply DSP Equalizer (if enabled and not flat)
-        if (got_frames > 0 && ctx->eq.enabled.load(std::memory_order_relaxed) && !ctx->eq.is_flat.load(std::memory_order_relaxed)) {
-            uint8_t* p = slot->pcm_buf + total_offset;
-            int total_samples = got_frames * ctx->channel_count;
-            if (ctx->bytes_per_sample == 4) {
-                int32_t* s32 = reinterpret_cast<int32_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    int ch = s % ctx->channel_count;
-                    double sample = static_cast<double>(s32[s]) / 2147483648.0;
-                    sample = ctx->eq.process_sample(ch, sample);
-                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
-                    s32[s] = static_cast<int32_t>(sample * 2147483647.0);
-                }
-            } else if (ctx->bytes_per_sample == 3) {
-                for (int s = 0; s < total_samples; s++) {
-                    int ch = s % ctx->channel_count;
-                    int32_t val = static_cast<int32_t>(p[3 * s] | (p[3 * s + 1] << 8) | (p[3 * s + 2] << 16));
-                    if (val & 0x800000) val |= 0xFF000000;
-                    double sample = static_cast<double>(val) / 8388608.0;
-                    sample = ctx->eq.process_sample(ch, sample);
-                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
-                    val = static_cast<int32_t>(sample * 8388607.0);
-                    p[3 * s + 0] = static_cast<uint8_t>(val & 0xFF);
-                    p[3 * s + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                    p[3 * s + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                }
-            } else if (ctx->bytes_per_sample == 2) {
-                int16_t* s16 = reinterpret_cast<int16_t*>(p);
-                for (int s = 0; s < total_samples; s++) {
-                    int ch = s % ctx->channel_count;
-                    double sample = static_cast<double>(s16[s]) / 32768.0;
-                    sample = ctx->eq.process_sample(ch, sample);
-                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
-                    s16[s] = static_cast<int16_t>(sample * 32767.0);
-                }
-            }
-        }
-
 
 
         if (got_bytes < pkt_len) {
@@ -545,14 +507,62 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
 
     int frames_written = 0;
 
-    // Apply SW volume on Float32 input before bit-depth conversion (HW mode: skip, unity gain)
-    bool hw_mode = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
-    float sw_vol = ctx->volume.load(std::memory_order_relaxed);
-    if (!hw_mode && ctx->src_encoding != 2 && sw_vol < 0.999f) {
-        float* f_in = const_cast<float*>(reinterpret_cast<const float*>(src_bytes));
+    // ── DSP: EQ + SW Volume (both Float32 and Int16 sources) ──────────────────────────────────────
+    // Applied before bit-depth conversion so the same logic covers all source formats.
+    {
         int total_samples = total_input_frames * ctx->src_channel_count;
-        for (int i = 0; i < total_samples; i++) {
-            f_in[i] *= sw_vol;
+        int num_ch        = ctx->src_channel_count;
+
+        bool eq_active  = ctx->eq.enabled.load(std::memory_order_relaxed)
+                       && !ctx->eq.is_flat.load(std::memory_order_relaxed);
+        bool hw_mode    = ctx->hw_volume_enabled.load(std::memory_order_relaxed);
+        float sw_vol    = ctx->volume.load(std::memory_order_relaxed);
+        bool vol_active = !hw_mode && sw_vol < 0.999f;
+
+        if (ctx->src_encoding != 2) {
+            // ── Float32 source (FLAC, Hi-Res, anything that reaches here as float) ──
+            float* f_in = const_cast<float*>(reinterpret_cast<const float*>(src_bytes));
+            if (eq_active && vol_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    double s = static_cast<double>(f_in[i]);
+                    s = ctx->eq.process_sample(i % num_ch, s);
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    f_in[i] = static_cast<float>(s) * sw_vol;
+                }
+            } else if (eq_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    double s = static_cast<double>(f_in[i]);
+                    s = ctx->eq.process_sample(i % num_ch, s);
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    f_in[i] = static_cast<float>(s);
+                }
+            } else if (vol_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    f_in[i] *= sw_vol;
+                }
+            }
+        } else {
+            // ── Int16 source (AAC, MP3, Opus decoded as PCM_16BIT) ──────────────────
+            int16_t* s16_in = const_cast<int16_t*>(reinterpret_cast<const int16_t*>(src_bytes));
+            if (eq_active && vol_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    double s = static_cast<double>(s16_in[i]) / 32768.0;
+                    s = ctx->eq.process_sample(i % num_ch, s);
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    s16_in[i] = static_cast<int16_t>(s * sw_vol * 32767.0);
+                }
+            } else if (eq_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    double s = static_cast<double>(s16_in[i]) / 32768.0;
+                    s = ctx->eq.process_sample(i % num_ch, s);
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
+                    s16_in[i] = static_cast<int16_t>(s * 32767.0);
+                }
+            } else if (vol_active) {
+                for (int i = 0; i < total_samples; i++) {
+                    s16_in[i] = static_cast<int16_t>(s16_in[i] * sw_vol);
+                }
+            }
         }
     }
 
