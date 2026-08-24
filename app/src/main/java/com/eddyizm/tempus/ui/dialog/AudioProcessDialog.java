@@ -193,12 +193,32 @@ public class AudioProcessDialog extends DialogFragment {
         // STAGE 4: Output Driver
         // ==========================================
         int rateToDisplay = (sinkRate > 0) ? sinkRate : decRate;
-        if (AudioOutputTracker.isDirectAudioSupported()) {
-            bind.pipelineDriverNameVal.setText("Hi-Res Direct HD\nNative libdirectaudio.so");
+        boolean isUsbEx = AudioOutputTracker.isUsbExclusiveActive(requireContext());
+
+        if (isUsbEx) {
+            bind.pipelineDriverNameVal.setText("UAC2 usbfs driver");
+            String streamDetails;
+            int targetBits = (AudioOutputTracker.getCurrentUsbConfig() != null) ? AudioOutputTracker.getCurrentUsbConfig().getBitDepth() : 32;
+            if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
+                streamDetails = "Float32 → Int" + targetBits + " PCM (Q" + (targetBits - 1) + " @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
+                streamDetails = "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_24BIT) {
+                streamDetails = "Direct 24-bit Integer PCM (Q23 @ " + formatKhz(rateToDisplay) + ")";
+            } else {
+                if (targetBits > 16) {
+                    streamDetails = "Int16 → Int" + targetBits + " PCM (Q" + (targetBits - 1) + " @ " + formatKhz(rateToDisplay) + ")";
+                } else {
+                    streamDetails = "Direct 16-bit Integer PCM (Int16 @ " + formatKhz(rateToDisplay) + ")";
+                }
+            }
+            bind.pipelineDriverStreamVal.setText(streamDetails);
+        } else if (AudioOutputTracker.isDirectAudioSupported()) {
+            bind.pipelineDriverNameVal.setText("Hi-Res Direct HD");
             
             String streamDetails;
             if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
-                streamDetails = "ARM NEON SIMD Vectorized Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                streamDetails = "Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
             } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
                 streamDetails = "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
             } else {
@@ -216,8 +236,8 @@ public class AudioProcessDialog extends DialogFragment {
         // ==========================================
         bind.pipelineHwEndpointVal.setText(AudioOutputTracker.getActiveOutputDeviceString(requireContext()));
         String hwRate = AudioOutputTracker.getHardwareSampleRateString(requireContext());
-        String hwBitDepth = AudioOutputTracker.getHardwareBitDepthString();
-        String hwChannels = AudioOutputTracker.getOutputChannelsString();
+        String hwBitDepth = AudioOutputTracker.getHardwareBitDepthString(requireContext());
+        String hwChannels = AudioOutputTracker.getOutputChannelsString(requireContext());
         bind.pipelineHwFormatVal.setText(hwBitDepth + " • " + hwRate + " (" + hwChannels + ")");
     }
 

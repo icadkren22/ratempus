@@ -20,6 +20,7 @@ import com.eddyizm.tempus.audio.usb.UsbAudioConfig
 import com.eddyizm.tempus.audio.usb.UsbDacManager
 import com.eddyizm.tempus.audio.usb.UsbExclusiveOutput
 import com.eddyizm.tempus.audio.usb.UsbVirtualCastVolumeProvider
+import com.eddyizm.tempus.util.AudioOutputTracker
 import com.eddyizm.tempus.util.Preferences
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
@@ -146,12 +147,15 @@ private class UsbExclusiveAudioOutput(
         opened = exclusiveOutput.open(usbConfig, outputConfig.encoding, srcChannelCount)
         if (!opened) {
             Log.e(TAG, "UsbExclusiveOutput.open() failed at init")
+        } else {
+            AudioOutputTracker.updateUsbAudioConfig(usbConfig)
         }
     }
 
     override fun play() {
         if (!isPlaying) {
             Log.i(TAG, "USB Exclusive playback started: ${usbConfig.sampleRate}Hz ${usbConfig.bitDepth}bit srcCh=$srcChannelCount (HW volume active)")
+            AudioOutputTracker.updateUsbAudioConfig(usbConfig)
             playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
             silentTracker.play()
             virtualCastVolume.setActive(true, output = exclusiveOutput)
@@ -218,6 +222,7 @@ private class UsbExclusiveAudioOutput(
         silentTracker.release()
         virtualCastVolume.setActive(false)
         exclusiveOutput.close()
+        AudioOutputTracker.updateUsbAudioConfig(null)
         listeners.forEach { it.onReleased() }
         listeners.clear()
     }

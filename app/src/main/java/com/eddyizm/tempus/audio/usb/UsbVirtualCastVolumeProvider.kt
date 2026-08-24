@@ -31,6 +31,28 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
     private var exclusiveOutput: UsbExclusiveOutput? = null
     private val playerListeners = mutableListOf<Player.Listener>()
 
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        when {
+            key == Preferences.USB_DAC_HW_VOLUME_ENABLED && isUsbExclusiveActive -> {
+                Log.i(TAG, "USB DAC HW Volume preference toggled -> re-applying volume mode")
+                applyCurrentVolume()
+            }
+            key == Preferences.USB_DAC_EXCLUSIVE_ENABLED && !Preferences.isUsbDacExclusiveEnabled() && isUsbExclusiveActive -> {
+                Log.i(TAG, "USB Exclusive disabled in settings -> stopping and releasing DAC")
+                val out = exclusiveOutput
+                if (out != null) {
+                    out.stop()
+                    out.close()
+                }
+                setActive(false)
+            }
+        }
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+    }
+
     var isUsbExclusiveActive: Boolean = false
         private set
 
@@ -84,14 +106,12 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
     private fun applyCurrentVolume() {
         val hwEnabled = Preferences.isUsbDacHwVolumeEnabled()
         val out = exclusiveOutput
+        val gain = computePerceptualGain(currentVolumeIndex)
         if (hwEnabled && out != null) {
-            out.setHwVolume(true, currentVolumeIndex)
-            out.setVolume(1.0f)
+            out.setHwVolume(true, currentVolumeIndex, gain)
             Log.i(TAG, "USB HW volume: $currentVolumeIndex% -> DAC Feature Unit 2")
         } else if (out != null) {
-            out.setHwVolume(false)
-            val gain = computePerceptualGain(currentVolumeIndex)
-            out.setVolume(gain)
+            out.setHwVolume(false, currentVolumeIndex, gain)
             Log.i(TAG, "USB SW volume: $currentVolumeIndex% -> gain=$gain")
         }
     }
@@ -190,7 +210,7 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
 
         fun computePerceptualGain(volumeIndex: Int): Float {
             val fraction = volumeIndex.coerceIn(0, 100) / 100.0f
-            return 0.50f * fraction * fraction * fraction
+            return 0.40f * fraction * fraction * fraction
         }
     }
 }

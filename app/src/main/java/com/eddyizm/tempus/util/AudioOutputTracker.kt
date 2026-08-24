@@ -16,6 +16,17 @@ object AudioOutputTracker {
     @Volatile
     private var currentConfig: AudioSink.AudioTrackConfig? = null
 
+    @Volatile
+    private var currentUsbConfig: com.eddyizm.tempus.audio.usb.UsbAudioConfig? = null
+
+    @JvmStatic
+    fun updateUsbAudioConfig(config: com.eddyizm.tempus.audio.usb.UsbAudioConfig?) {
+        currentUsbConfig = config
+    }
+
+    @JvmStatic
+    fun getCurrentUsbConfig(): com.eddyizm.tempus.audio.usb.UsbAudioConfig? = currentUsbConfig
+
     @JvmStatic
     fun updateAudioTrackConfig(config: AudioSink.AudioTrackConfig?) {
         currentConfig = config
@@ -26,6 +37,16 @@ object AudioOutputTracker {
 
     @JvmStatic
     fun getCurrentSampleRate(): Int = currentConfig?.sampleRate ?: 0
+
+    @JvmStatic
+    fun isUsbExclusiveActive(context: Context): Boolean {
+        if (com.eddyizm.tempus.audio.usb.UsbVirtualCastVolumeProvider.getInstance(context).isUsbExclusiveActive) {
+            return true
+        }
+        val usb = currentUsbConfig
+        return usb != null && Preferences.isUsbDacExclusiveEnabled() &&
+                com.eddyizm.tempus.audio.usb.UsbDacManager.getInstance(context).isUsbDacConnected
+    }
 
     @JvmStatic
     fun isDirectAudioSupported(): Boolean {
@@ -40,6 +61,10 @@ object AudioOutputTracker {
 
     @JvmStatic
     fun getHardwareSampleRate(context: Context): Int {
+        if (isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            if (usb != null && usb.sampleRate > 0) return usb.sampleRate
+        }
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val nativeRate = audioManager?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
         return if (isDirectAudioSupported()) {
@@ -56,7 +81,12 @@ object AudioOutputTracker {
     }
 
     @JvmStatic
-    fun getHardwareBitDepthString(): String {
+    fun getHardwareBitDepthString(context: Context? = null): String {
+        if (context != null && isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            val bits = usb?.bitDepth ?: 32
+            return "$bits-bit PCM (Int$bits)"
+        }
         return if (isDirectAudioSupported()) {
             val config = currentConfig
             when (config?.encoding) {
@@ -71,17 +101,25 @@ object AudioOutputTracker {
 
     @JvmStatic
     fun getOutputSampleRateString(context: Context): String {
+        if (isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            if (usb != null && usb.sampleRate > 0) return formatSampleRate(usb.sampleRate)
+        }
         val config = currentConfig
         if (config != null && config.sampleRate > 0) {
             return formatSampleRate(config.sampleRate)
         }
-
         val nativeRate = getHardwareSampleRate(context)
         return formatSampleRate(nativeRate)
     }
 
     @JvmStatic
     fun getOutputBitDepthString(context: Context): String {
+        if (isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            val bits = usb?.bitDepth ?: 32
+            return "$bits-bit PCM"
+        }
         val config = currentConfig
         if (config != null) {
             if (config.offload) {
@@ -100,7 +138,12 @@ object AudioOutputTracker {
     }
 
     @JvmStatic
-    fun getOutputChannelsString(): String {
+    fun getOutputChannelsString(context: Context? = null): String {
+        if (context != null && isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            val ch = usb?.channelCount ?: 2
+            return if (ch == 1) "Mono (1.0)" else "Stereo (2.0)"
+        }
         val config = currentConfig
         if (config != null) {
             return when (config.channelConfig) {
@@ -119,7 +162,10 @@ object AudioOutputTracker {
     }
 
     @JvmStatic
-    fun getOutputModeString(): String {
+    fun getOutputModeString(context: Context? = null): String {
+        if (context != null && isUsbExclusiveActive(context)) {
+            return "UAC2 usbfs driver (Bit-perfect)"
+        }
         val config = currentConfig
         return when {
             config != null && config.offload -> "Direct Audio Offload (Bit-perfect)"
@@ -130,6 +176,15 @@ object AudioOutputTracker {
 
     @JvmStatic
     fun getActiveOutputDeviceString(context: Context): String {
+        if (isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            val devName = usb?.usbDevice?.productName
+            return if (!devName.isNullOrBlank()) {
+                "USB DAC ($devName • Exclusive Mode)"
+            } else {
+                "USB Audio DAC (Exclusive Mode)"
+            }
+        }
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return "Default Output"
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
 
@@ -208,6 +263,11 @@ object AudioOutputTracker {
 
     @JvmStatic
     fun getShortOutputFormatString(context: Context): String {
+        if (isUsbExclusiveActive(context)) {
+            val sampleRate = getOutputSampleRateString(context).substringBefore(" (")
+            val bitDepth = getOutputBitDepthString(context)
+            return "OUT: $bitDepth • $sampleRate (UAC2 Exclusive)"
+        }
         return if (isDirectAudioSupported()) {
             val sampleRate = getOutputSampleRateString(context).substringBefore(" (")
             val bitDepth = getOutputBitDepthString(context)

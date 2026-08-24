@@ -163,13 +163,14 @@ class UsbExclusiveOutput(private val context: Context) {
     /**
      * Controls DAC Hardware Volume via UAC2 Feature Unit.
      * [volumeIndex]: 0..100
+     * [swGain]: software volume gain when HW mode is disabled
      */
-    fun setHwVolume(enabled: Boolean, volumeIndex: Int = 50) {
+    fun setHwVolume(enabled: Boolean, volumeIndex: Int = 50, swGain: Float = 0.02f) {
         if (nativeHandle == 0L) return
         val minDb256 = -20480 // -80 dB in 1/256 dB units
         val volDb256 = if (volumeIndex <= 0) minDb256
                        else (minDb256 * (100 - volumeIndex) / 100)
-        nativeSetHwVolume(nativeHandle, enabled, volDb256.toShort())
+        nativeSetHwVolume(nativeHandle, enabled, volDb256.toShort(), swGain)
     }
 
     fun stop() {
@@ -198,7 +199,7 @@ class UsbExclusiveOutput(private val context: Context) {
     private external fun nativeWrite(handle: Long, buffer: ByteBuffer, offset: Int, size: Int): Int
     private external fun nativeGetPositionUs(handle: Long): Long
     private external fun nativeSetVolume(handle: Long, volume: Float)
-    private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short)
+    private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short, swGain: Float)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)
 
