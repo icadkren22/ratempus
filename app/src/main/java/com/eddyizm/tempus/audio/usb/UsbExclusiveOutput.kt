@@ -151,6 +151,16 @@ class UsbExclusiveOutput(private val context: Context) {
     }
 
     /**
+     * Controls Software Volume Gain (used when HW volume is disabled).
+     * [volume]: 0.0f .. 1.0f
+     */
+    fun setVolume(volume: Float) {
+        if (nativeHandle != 0L) {
+            nativeSetVolume(nativeHandle, volume)
+        }
+    }
+
+    /**
      * Controls DAC Hardware Volume via UAC2 Feature Unit.
      * [volumeIndex]: 0..100
      */
@@ -187,6 +197,7 @@ class UsbExclusiveOutput(private val context: Context) {
     private external fun nativeStart(handle: Long): Boolean
     private external fun nativeWrite(handle: Long, buffer: ByteBuffer, offset: Int, size: Int): Int
     private external fun nativeGetPositionUs(handle: Long): Long
+    private external fun nativeSetVolume(handle: Long, volume: Float)
     private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)

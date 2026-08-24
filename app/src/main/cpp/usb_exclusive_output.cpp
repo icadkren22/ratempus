@@ -132,6 +132,9 @@ struct UsbAudioCtx {
     int      bytes_per_sample;  // DAC bytes per sample: 2 for 16-bit, 3 for 24-bit, 4 for 32-bit
     int      frame_size;        // channel_count * bytes_per_sample (DAC stereo frame size)
 
+    std::atomic<float> volume{1.0f};           // Software gain (used when hw_volume_enabled=false)
+    std::atomic<bool>  hw_volume_enabled{true}; // If true: use Feature Unit 2 HW volume
+
     uint32_t microframe_accum_q16; // 16.16 fixed point accumulator for 8000 Hz microframes
 
     std::atomic<uint64_t> frames_consumed{0};
@@ -390,6 +393,8 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeOpen(
     ctx->src_encoding      = srcEncoding;
     ctx->bytes_per_sample  = bitDepth / 8;
     ctx->frame_size        = dac_channels * ctx->bytes_per_sample;
+    ctx->volume.store(1.0f);
+    ctx->hw_volume_enabled.store(true);
     ctx->microframe_accum_q16 = 0;
     ctx->frames_consumed.store(0);
 
@@ -457,6 +462,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
 
     if (!src_bytes) return -1;
 
+    float vol = ctx->volume.load(std::memory_order_relaxed);
     int src_bytes_per_sample = (ctx->src_encoding == 2) ? 2 : 4;
     int src_frame_size = ctx->src_channel_count * src_bytes_per_sample;
     int total_input_frames = sizeInBytes / src_frame_size;
@@ -491,7 +497,10 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 32-bit Stereo
                 std::vector<int32_t> converted(total_input_frames * 2);
                 for (int i = 0; i < total_input_frames; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 16;
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    int32_t val = static_cast<int32_t>(s * 2147483647.0f);
                     converted[2 * i + 0] = val; // Left
                     converted[2 * i + 1] = val; // Right
                 }
@@ -500,7 +509,10 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 24-bit Stereo
                 std::vector<uint8_t> converted(total_input_frames * 2 * 3);
                 for (int i = 0; i < total_input_frames; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 8;
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    int32_t val = static_cast<int32_t>(s * 8388607.0f);
                     converted[6 * i + 0] = static_cast<uint8_t>(val & 0xFF);
                     converted[6 * i + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
                     converted[6 * i + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
@@ -513,8 +525,12 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 16-bit Stereo
                 std::vector<int16_t> converted(total_input_frames * 2);
                 for (int i = 0; i < total_input_frames; i++) {
-                    converted[2 * i + 0] = s16[i];
-                    converted[2 * i + 1] = s16[i];
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    int16_t val = static_cast<int16_t>(s * 32767.0f);
+                    converted[2 * i + 0] = val;
+                    converted[2 * i + 1] = val;
                 }
                 frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             }
@@ -525,7 +541,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 32-bit Stereo
                 std::vector<int32_t> converted(total_input_frames * 2);
                 for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     int32_t val = static_cast<int32_t>(f * 2147483647.0f);
@@ -537,7 +553,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 24-bit Stereo
                 std::vector<uint8_t> converted(total_input_frames * 2 * 3);
                 for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     int32_t val = static_cast<int32_t>(f * 8388607.0f);
@@ -553,7 +569,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 16-bit Stereo
                 std::vector<int16_t> converted(total_input_frames * 2);
                 for (int i = 0; i < total_input_frames; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     int16_t val = static_cast<int16_t>(f * 32767.0f);
@@ -573,14 +589,20 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 32-bit Stereo
                 std::vector<int32_t> converted(total_samples);
                 for (int i = 0; i < total_samples; i++) {
-                    converted[i] = static_cast<int32_t>(s16[i]) << 16;
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    converted[i] = static_cast<int32_t>(s * 2147483647.0f);
                 }
                 frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             } else if (ctx->bytes_per_sample == 3) {
                 // DAC: 24-bit Stereo
                 std::vector<uint8_t> converted(total_samples * 3);
                 for (int i = 0; i < total_samples; i++) {
-                    int32_t val = static_cast<int32_t>(s16[i]) << 8;
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    int32_t val = static_cast<int32_t>(s * 8388607.0f);
                     converted[i * 3 + 0] = static_cast<uint8_t>(val & 0xFF);
                     converted[i * 3 + 1] = static_cast<uint8_t>((val >> 8) & 0xFF);
                     converted[i * 3 + 2] = static_cast<uint8_t>((val >> 16) & 0xFF);
@@ -588,7 +610,14 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 frames_written = ring_write_frames(converted.data(), total_input_frames, ctx->frame_size);
             } else {
                 // DAC: 16-bit Stereo
-                frames_written = ring_write_frames(src_bytes, total_input_frames, ctx->frame_size);
+                std::vector<int16_t> converted(total_samples);
+                for (int i = 0; i < total_samples; i++) {
+                    float s = (s16[i] / 32768.0f) * vol;
+                    if (s > 1.0f)  s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    converted[i] = static_cast<int16_t>(s * 32767.0f);
+                }
+                frames_written = ring_write_frames(reinterpret_cast<const uint8_t*>(converted.data()), total_input_frames, ctx->frame_size);
             }
         } else {
             // Source: Float32 Stereo
@@ -597,7 +626,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 32-bit Stereo
                 std::vector<int32_t> converted(total_samples);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     converted[i] = static_cast<int32_t>(f * 2147483647.0f);
@@ -607,7 +636,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 24-bit Stereo
                 std::vector<uint8_t> converted(total_samples * 3);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     int32_t val = static_cast<int32_t>(f * 8388607.0f);
@@ -620,7 +649,7 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeWrite(
                 // DAC: 16-bit Stereo
                 std::vector<int16_t> converted(total_samples);
                 for (int i = 0; i < total_samples; i++) {
-                    float f = src_float[i];
+                    float f = src_float[i] * vol;
                     if (f > 1.0f)  f = 1.0f;
                     if (f < -1.0f) f = -1.0f;
                     converted[i] = static_cast<int16_t>(f * 32767.0f);
@@ -644,19 +673,35 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeGetPositionUs(
 }
 
 JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetVolume(
+        JNIEnv*, jclass, jlong h, jfloat volume) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (!ctx) return;
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+    ctx->volume.store(volume, std::memory_order_relaxed);
+    LOGI("nativeSetVolume: updated sw gain to %.6f", volume);
+}
+
+JNIEXPORT void JNICALL
 Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetHwVolume(
         JNIEnv*, jclass, jlong h, jboolean enabled, jshort vol_db_256) {
     auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
     if (!ctx) return;
 
     if (enabled) {
+        ctx->hw_volume_enabled.store(true, std::memory_order_relaxed);
         set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, (int16_t)vol_db_256);
         set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
+        // Set software gain to 1.0f (unity) to avoid double attenuation
+        ctx->volume.store(1.0f, std::memory_order_relaxed);
         LOGI("nativeSetHwVolume: HW mode ON vol_db_256=%d (%.2f dB)", vol_db_256, (float)vol_db_256 / 256.0f);
     } else {
+        ctx->hw_volume_enabled.store(false, std::memory_order_relaxed);
+        // Reset DAC to 0 dB — software gain takes over
         set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0);
         set_hardware_volume(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 0x0000);
-        LOGI("nativeSetHwVolume: HW mode OFF — DAC reset to 0dB");
+        LOGI("nativeSetHwVolume: HW mode OFF — DAC reset to 0dB, SW gain active");
     }
 }
 

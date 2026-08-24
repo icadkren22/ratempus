@@ -86,7 +86,13 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
         val out = exclusiveOutput
         if (hwEnabled && out != null) {
             out.setHwVolume(true, currentVolumeIndex)
+            out.setVolume(1.0f)
             Log.i(TAG, "USB HW volume: $currentVolumeIndex% -> DAC Feature Unit 2")
+        } else if (out != null) {
+            out.setHwVolume(false)
+            val gain = computePerceptualGain(currentVolumeIndex)
+            out.setVolume(gain)
+            Log.i(TAG, "USB SW volume: $currentVolumeIndex% -> gain=$gain")
         }
     }
 
@@ -180,6 +186,11 @@ class UsbVirtualCastVolumeProvider private constructor(private val context: Cont
             return instance ?: synchronized(this) {
                 instance ?: UsbVirtualCastVolumeProvider(context.applicationContext).also { instance = it }
             }
+        }
+
+        fun computePerceptualGain(volumeIndex: Int): Float {
+            val fraction = volumeIndex.coerceIn(0, 100) / 100.0f
+            return 0.50f * fraction * fraction * fraction
         }
     }
 }
