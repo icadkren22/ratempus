@@ -180,6 +180,18 @@ public class AudioProcessDialog extends DialogFragment {
 
         boolean isUsbEx = AudioOutputTracker.isUsbExclusiveActive(requireContext());
         boolean eqEnabled = Preferences.isEqualizerEnabled();
+        boolean isEqActive = false;
+        String decodedSampleType;
+        if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
+            decodedSampleType = "Float32";
+        } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
+            decodedSampleType = "Int32";
+        } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_24BIT) {
+            decodedSampleType = "Int24";
+        } else {
+            decodedSampleType = "Int16";
+        }
+
         if (!eqEnabled) {
             bind.pipelineDspEqualizerVal.setText("Disabled");
         } else {
@@ -197,7 +209,8 @@ public class AudioProcessDialog extends DialogFragment {
             if (isFlat) {
                 bind.pipelineDspEqualizerVal.setText("Flat (0.0 dB • Bit-perfect)");
             } else {
-                bind.pipelineDspEqualizerVal.setText("Float64 (" + sb.toString() + " dB)");
+                isEqActive = true;
+                bind.pipelineDspEqualizerVal.setText(decodedSampleType + " → Float64 (" + sb.toString() + " dB)");
             }
         }
 
@@ -221,7 +234,9 @@ public class AudioProcessDialog extends DialogFragment {
             bind.pipelineDriverNameVal.setText("UAC2 usbfs driver");
             String streamDetails;
             int targetBits = (AudioOutputTracker.getCurrentUsbConfig() != null) ? AudioOutputTracker.getCurrentUsbConfig().getBitDepth() : 32;
-            if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
+            if (isEqActive) {
+                streamDetails = "Float64 → Int" + targetBits + " PCM (Q" + (targetBits - 1) + " @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
                 streamDetails = "Float32 → Int" + targetBits + " PCM (Q" + (targetBits - 1) + " @ " + formatKhz(rateToDisplay) + ")";
             } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
                 streamDetails = "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
@@ -231,7 +246,7 @@ public class AudioProcessDialog extends DialogFragment {
                 if (targetBits > 16) {
                     streamDetails = "Int16 → Int" + targetBits + " PCM (Q" + (targetBits - 1) + " @ " + formatKhz(rateToDisplay) + ")";
                 } else {
-                    streamDetails = "Direct 16-bit Integer PCM (Int16 @ " + formatKhz(rateToDisplay) + ")";
+                    streamDetails = "Direct 16-bit Integer PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
                 }
             }
             bind.pipelineDriverStreamVal.setText(streamDetails);
@@ -240,16 +255,44 @@ public class AudioProcessDialog extends DialogFragment {
             
             String streamDetails;
             if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
-                streamDetails = "Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                streamDetails = isEqActive
+                        ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
             } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
-                streamDetails = "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                streamDetails = isEqActive
+                        ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_24BIT) {
+                streamDetails = isEqActive
+                        ? "Float64 → Int24 PCM (Q23 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 24-bit Integer PCM (Q23 @ " + formatKhz(rateToDisplay) + ")";
             } else {
-                streamDetails = "Direct 16-bit Integer PCM (Int16 @ " + formatKhz(rateToDisplay) + ")";
+                streamDetails = isEqActive
+                        ? "Float64 → Int16 PCM (Q15 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 16-bit Integer PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
             }
             bind.pipelineDriverStreamVal.setText(streamDetails);
         } else {
             bind.pipelineDriverNameVal.setText("Android AudioTrack");
-            bind.pipelineDriverStreamVal.setText("Audio Track PCM Buffer (" + formatKhz(rateToDisplay) + ")");
+            String streamDetails;
+            if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
+                streamDetails = isEqActive
+                        ? "Float64 → Float32 PCM (IEEE 754 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct Float32 PCM (IEEE 754 @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
+                streamDetails = isEqActive
+                        ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_24BIT) {
+                streamDetails = isEqActive
+                        ? "Float64 → Int24 PCM (Q23 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 24-bit Integer PCM (Q23 @ " + formatKhz(rateToDisplay) + ")";
+            } else {
+                streamDetails = isEqActive
+                        ? "Float64 → Int16 PCM (Q15 @ " + formatKhz(rateToDisplay) + ")"
+                        : "Direct 16-bit Integer PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
+            }
+            bind.pipelineDriverStreamVal.setText(streamDetails);
         }
 
 

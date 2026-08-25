@@ -245,7 +245,14 @@ object AudioOutputTracker {
     }
 
     @JvmStatic
-    fun getShortSummary(): String {
+    @JvmOverloads
+    fun getShortSummary(context: Context? = null): String {
+        if (context != null && isUsbExclusiveActive(context)) {
+            val usb = currentUsbConfig
+            val rate = if (usb != null && usb.sampleRate > 0) formatKhzShort(usb.sampleRate) else "Direct"
+            val bitDepth = "${usb?.bitDepth ?: 32}-bit"
+            return "$bitDepth • $rate (UAC2 Exclusive)"
+        }
         val config = currentConfig
         return if (config != null && config.sampleRate > 0) {
             val rate = formatKhzShort(config.sampleRate)

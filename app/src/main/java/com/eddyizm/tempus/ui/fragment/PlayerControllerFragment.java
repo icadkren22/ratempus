@@ -499,7 +499,7 @@ public class PlayerControllerFragment extends Fragment {
             return;
         }
 
-        String summary = AudioOutputTracker.getShortSummary();
+        String summary = AudioOutputTracker.getShortSummary(getContext());
         if (summary != null && !summary.isEmpty()) {
             playerMediaOutputFormat.setText("Output: " + summary);
             playerMediaOutputFormat.setVisibility(View.VISIBLE);
@@ -523,12 +523,14 @@ public class PlayerControllerFragment extends Fragment {
         Preferences.setAudioOutputExpanded(newExpanded);
 
         if (newExpanded) {
-            String summary = AudioOutputTracker.getShortSummary();
+            String summary = AudioOutputTracker.getShortSummary(getContext());
             if (summary != null && !summary.isEmpty()) {
                 playerMediaOutputFormat.setText("Output: " + summary);
                 playerMediaOutputFormat.setVisibility(View.VISIBLE);
             } else {
-                playerMediaOutputFormat.setText("Output: Direct HD / AudioTrack");
+                String fallback = (getContext() != null && AudioOutputTracker.isUsbExclusiveActive(getContext()))
+                        ? "Output: UAC2 Exclusive" : "Output: Direct HD / AudioTrack";
+                playerMediaOutputFormat.setText(fallback);
                 playerMediaOutputFormat.setVisibility(View.VISIBLE);
             }
         } else {
