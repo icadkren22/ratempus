@@ -253,23 +253,33 @@ public class AudioProcessDialog extends DialogFragment {
         } else if (AudioOutputTracker.isDirectAudioSupported()) {
             bind.pipelineDriverNameVal.setText("Hi-Res Direct HD");
             
+            int directBits = 32;
+            com.eddyizm.tempus.audio.NativeDirectAudioTrack activeTrack = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack();
+            if (activeTrack != null) {
+                directBits = activeTrack.getActualBitDepth();
+            }
+
             String streamDetails;
-            if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
-                streamDetails = isEqActive
-                        ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
-                        : "Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
-            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
-                streamDetails = isEqActive
-                        ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
-                        : "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
-            } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_24BIT) {
-                streamDetails = isEqActive
-                        ? "Float64 → Int24 PCM (Q23 @ " + formatKhz(rateToDisplay) + ")"
-                        : "Direct 24-bit Integer PCM (Q23 @ " + formatKhz(rateToDisplay) + ")";
+            if (directBits == 32) {
+                if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT) {
+                    streamDetails = isEqActive
+                            ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                            : "Float32 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                } else if (activeEncoding == androidx.media3.common.C.ENCODING_PCM_32BIT) {
+                    streamDetails = isEqActive
+                            ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                            : "Direct 32-bit Integer PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                } else {
+                    streamDetails = isEqActive
+                            ? "Float64 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")"
+                            : "Int16 → Int32 PCM (Q31 @ " + formatKhz(rateToDisplay) + ")";
+                }
             } else {
-                streamDetails = isEqActive
-                        ? "Float64 → Int16 PCM (Q15 @ " + formatKhz(rateToDisplay) + ")"
-                        : "Direct 16-bit Integer PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
+                if (isEqActive) {
+                    streamDetails = "Float64 → Int16 PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
+                } else {
+                    streamDetails = "Direct 16-bit Integer PCM (Q15 @ " + formatKhz(rateToDisplay) + ")";
+                }
             }
             bind.pipelineDriverStreamVal.setText(streamDetails);
         } else {

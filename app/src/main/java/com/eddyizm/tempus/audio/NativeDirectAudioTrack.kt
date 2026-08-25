@@ -85,6 +85,9 @@ class NativeDirectAudioTrack(
         external fun nativeGetSampleRate(handle: Long): Int
 
         @JvmStatic
+        external fun nativeGetBitDepth(handle: Long): Int
+
+        @JvmStatic
         external fun nativeSetEqEnabled(handle: Long, enabled: Boolean)
 
         @JvmStatic
@@ -92,6 +95,9 @@ class NativeDirectAudioTrack(
 
         @Volatile
         private var activeTrack: NativeDirectAudioTrack? = null
+
+        @JvmStatic
+        fun getActiveTrack(): NativeDirectAudioTrack? = activeTrack
 
         @JvmStatic
         fun setNativeEqEnabled(enabled: Boolean) {
@@ -124,6 +130,7 @@ class NativeDirectAudioTrack(
     val isValid: Boolean get() = nativeHandle != 0L
     val isExclusive: Boolean get() = if (isValid) nativeIsExclusive(nativeHandle) else false
     val actualSampleRate: Int get() = if (isValid) nativeGetSampleRate(nativeHandle) else sampleRate
+    val actualBitDepth: Int get() = if (isValid) nativeGetBitDepth(nativeHandle) else 32
 
     fun play(): Boolean = if (isValid) nativeStart(nativeHandle) else false
     fun pause(): Boolean = if (isValid) nativePause(nativeHandle) else false

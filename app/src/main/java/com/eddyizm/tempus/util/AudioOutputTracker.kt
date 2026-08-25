@@ -88,12 +88,9 @@ object AudioOutputTracker {
             return "$bits-bit PCM (Int$bits)"
         }
         return if (isDirectAudioSupported()) {
-            val config = currentConfig
-            when (config?.encoding) {
-                C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> "32-bit PCM (Int32)"
-                C.ENCODING_PCM_24BIT -> "24-bit PCM (Int24)"
-                else -> "16-bit PCM (Int16)"
-            }
+            val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
+            val bits = track?.actualBitDepth ?: 32
+            "$bits-bit PCM (Int$bits)"
         } else {
             "16-bit PCM (Int16)"
         }
@@ -120,6 +117,11 @@ object AudioOutputTracker {
             val bits = usb?.bitDepth ?: 32
             return "$bits-bit PCM"
         }
+        if (isDirectAudioSupported()) {
+            val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
+            val bits = track?.actualBitDepth ?: 32
+            return "$bits-bit PCM"
+        }
         val config = currentConfig
         if (config != null) {
             if (config.offload) {
@@ -129,7 +131,7 @@ object AudioOutputTracker {
                 C.ENCODING_PCM_16BIT -> "16-bit PCM"
                 C.ENCODING_PCM_24BIT -> "24-bit PCM"
                 C.ENCODING_PCM_32BIT -> "32-bit PCM"
-                C.ENCODING_PCM_FLOAT -> if (isDirectAudioSupported()) "32-bit PCM" else "32-bit Float PCM"
+                C.ENCODING_PCM_FLOAT -> "32-bit Float PCM"
                 C.ENCODING_PCM_8BIT -> "8-bit PCM"
                 else -> "16-bit PCM"
             }
@@ -256,10 +258,15 @@ object AudioOutputTracker {
         val config = currentConfig
         return if (config != null && config.sampleRate > 0) {
             val rate = formatKhzShort(config.sampleRate)
-            val bitDepth = when (config.encoding) {
-                C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> "32-bit"
-                C.ENCODING_PCM_24BIT -> "24-bit"
-                else -> "16-bit"
+            val bitDepth = if (isDirectAudioSupported()) {
+                val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
+                "${track?.actualBitDepth ?: 32}-bit"
+            } else {
+                when (config.encoding) {
+                    C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> "32-bit"
+                    C.ENCODING_PCM_24BIT -> "24-bit"
+                    else -> "16-bit"
+                }
             }
             val driver = if (isDirectAudioSupported()) "Direct HD" else "AudioTrack"
             "$bitDepth • $rate ($driver)"

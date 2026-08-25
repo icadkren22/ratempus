@@ -260,7 +260,7 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeCreate(
     ctx->sampleRate = (uint32_t)sampleRate;
     ctx->channelCount = channelCount;
     ctx->inputEncoding = encoding;
-    ctx->outputFormat = (encoding == 2) ? AUDIO_FORMAT_PCM_16_BIT : AUDIO_FORMAT_PCM_32_BIT;
+    ctx->outputFormat = AUDIO_FORMAT_PCM_32_BIT;
     ctx->eq.set_sample_rate(ctx->sampleRate);
 
     AttributionSourceState attr; memset(&attr, 0, sizeof(attr));
@@ -275,26 +275,28 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeCreate(
 
     audio_channel_mask_t chMask = (channelCount == 1) ? AUDIO_CHANNEL_OUT_MONO : AUDIO_CHANNEL_OUT_STEREO;
 
-    LOGI("Creating Direct AudioTrack sr=%u ch=%d enc=%d outFmt=0x%x flags=0x1 (isV12=%d)",
-         ctx->sampleRate, channelCount, encoding, ctx->outputFormat, s_isV12 ? 1 : 0);
+    LOGI("Creating Direct AudioTrack (attempting 32-bit) sr=%u ch=%d enc=%d flags=0x1",
+         ctx->sampleRate, channelCount, encoding);
 
+    // Attempt 1: AUDIO_FORMAT_PCM_32_BIT at requested sample rate
     int32_t status = -1;
     if (s_isV12 && s_set_v12) {
         status = s_set_v12(ctx->mem, AUDIO_STREAM_MUSIC,
-            ctx->sampleRate, ctx->outputFormat, chMask, 0,
+            ctx->sampleRate, AUDIO_FORMAT_PCM_32_BIT, chMask, 0,
             AUDIO_OUTPUT_FLAG_DIRECT, cb, 0, shm,
             false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
             nullptr, attr, nullptr, false, 1.0f, 0);
     } else if (s_set_v8) {
         status = s_set_v8(ctx->mem, AUDIO_STREAM_MUSIC,
-            ctx->sampleRate, ctx->outputFormat, chMask, 0,
+            ctx->sampleRate, AUDIO_FORMAT_PCM_32_BIT, chMask, 0,
             AUDIO_OUTPUT_FLAG_DIRECT, nullptr, nullptr, 0, shm,
             false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
             nullptr, -1, -1, nullptr, false, 1.0f, 0);
     }
 
-    if (status != 0) {
-        LOGW("set(%u Hz) failed=%d, retrying at 48kHz", ctx->sampleRate, status);
+    // Attempt 2: If 32-bit failed at requested rate, try 32-bit at 48kHz
+    if (status != 0 && ctx->sampleRate != 48000) {
+        LOGW("set(32-bit @ %u Hz) failed=%d, retrying 32-bit at 48kHz", ctx->sampleRate, status);
         ctx->sampleRate = 48000;
         if (s_dtor) s_dtor(ctx->mem);
         if (s_isV12 && s_ctor_v12) {
@@ -314,6 +316,52 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeCreate(
         }
     }
 
+    // Attempt 3: If 32-bit is completely unsupported by HAL, fallback to 16-bit at requested sample rate
+    if (status != 0) {
+        LOGW("Direct 32-bit unsupported (status=%d), falling back to 16-bit at %d Hz", status, sampleRate);
+        ctx->sampleRate = (uint32_t)sampleRate;
+        ctx->outputFormat = AUDIO_FORMAT_PCM_16_BIT;
+        if (s_dtor) s_dtor(ctx->mem);
+        if (s_isV12 && s_ctor_v12) {
+            s_ctor_v12(ctx->mem, attr);
+            status = s_set_v12(ctx->mem, AUDIO_STREAM_MUSIC,
+                ctx->sampleRate, AUDIO_FORMAT_PCM_16_BIT, chMask, 0,
+                AUDIO_OUTPUT_FLAG_DIRECT, cb, 0, shm,
+                false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
+                nullptr, attr, nullptr, false, 1.0f, 0);
+        } else if (s_ctor_v8 && s_set_v8) {
+            s_ctor_v8(ctx->mem);
+            status = s_set_v8(ctx->mem, AUDIO_STREAM_MUSIC,
+                ctx->sampleRate, AUDIO_FORMAT_PCM_16_BIT, chMask, 0,
+                AUDIO_OUTPUT_FLAG_DIRECT, nullptr, nullptr, 0, shm,
+                false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
+                nullptr, -1, -1, nullptr, false, 1.0f, 0);
+        }
+    }
+
+    // Attempt 4: If 16-bit at requested rate failed, try 16-bit at 48kHz
+    if (status != 0 && ctx->sampleRate != 48000) {
+        LOGW("set(16-bit @ %u Hz) failed=%d, retrying 16-bit at 48kHz", ctx->sampleRate, status);
+        ctx->sampleRate = 48000;
+        ctx->outputFormat = AUDIO_FORMAT_PCM_16_BIT;
+        if (s_dtor) s_dtor(ctx->mem);
+        if (s_isV12 && s_ctor_v12) {
+            s_ctor_v12(ctx->mem, attr);
+            status = s_set_v12(ctx->mem, AUDIO_STREAM_MUSIC,
+                48000, AUDIO_FORMAT_PCM_16_BIT, chMask, 0,
+                AUDIO_OUTPUT_FLAG_DIRECT, cb, 0, shm,
+                false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
+                nullptr, attr, nullptr, false, 1.0f, 0);
+        } else if (s_ctor_v8 && s_set_v8) {
+            s_ctor_v8(ctx->mem);
+            status = s_set_v8(ctx->mem, AUDIO_STREAM_MUSIC,
+                48000, AUDIO_FORMAT_PCM_16_BIT, chMask, 0,
+                AUDIO_OUTPUT_FLAG_DIRECT, nullptr, nullptr, 0, shm,
+                false, AUDIO_SESSION_ALLOCATE, TRANSFER_SYNC,
+                nullptr, -1, -1, nullptr, false, 1.0f, 0);
+        }
+    }
+
     if (status != 0) {
         LOGE("AudioTrack::set failed=%d", status);
         if (s_dtor) s_dtor(ctx->mem);
@@ -322,7 +370,8 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeCreate(
         return 0;
     }
 
-    LOGI("Direct AudioTrack created: sr=%u fmt=0x%x", ctx->sampleRate, ctx->outputFormat);
+    LOGI("Direct AudioTrack created: sr=%u fmt=0x%x (32-bit=%d)",
+         ctx->sampleRate, ctx->outputFormat, (ctx->outputFormat == AUDIO_FORMAT_PCM_32_BIT) ? 1 : 0);
     return reinterpret_cast<jlong>(ctx);
 }
 
@@ -361,10 +410,13 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeStop(JNIEnv*, jclass,
 JNIEXPORT void JNICALL
 Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeClose(JNIEnv*, jclass, jlong h) {
     auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
-    if (ctx) {
-        if (ctx->mem) { s_stop(ctx->mem); s_dtor(ctx->mem); free(ctx->mem); ctx->mem = nullptr; }
-        delete ctx;
+    if (!ctx) return;
+    if (ctx->mem) {
+        if (s_stop) s_stop(ctx->mem);
+        if (s_dtor) s_dtor(ctx->mem);
+        free(ctx->mem);
     }
+    delete ctx;
 }
 
 JNIEXPORT jint JNICALL
@@ -398,51 +450,100 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeWrite(
     if (!srcPtr) return -1;
 
     ssize_t written = 0;
-    if (ctx->inputEncoding == 4 && ctx->outputFormat == AUDIO_FORMAT_PCM_32_BIT) {
-        const int n = sizeInBytes / sizeof(float);
-        ctx->convBuf.resize(n);
-        const float* __restrict in = reinterpret_cast<const float*>(srcPtr);
-        int32_t* __restrict out = ctx->convBuf.data();
-        if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
-            for (int i = 0; i < n; i++) {
-                float f = in[i];
-                if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
-                out[i] = (int32_t)(f * 2147483647.f);
+    if (ctx->outputFormat == AUDIO_FORMAT_PCM_32_BIT) {
+        if (ctx->inputEncoding == 4) {
+            // Source: Float32 -> Output: 32-bit Integer PCM (Q31)
+            const int n = sizeInBytes / sizeof(float);
+            ctx->convBuf.resize(n);
+            const float* __restrict in = reinterpret_cast<const float*>(srcPtr);
+            int32_t* __restrict out = ctx->convBuf.data();
+            if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+                for (int i = 0; i < n; i++) {
+                    float f = in[i];
+                    if (f > 1.f) f = 1.f; else if (f < -1.f) f = -1.f;
+                    out[i] = (int32_t)(f * 2147483647.f);
+                }
+            } else {
+                int ch = 0;
+                int numCh = (ctx->channelCount == 1) ? 1 : 2;
+                for (int i = 0; i < n; i++) {
+                    double sample = static_cast<double>(in[i]);
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    out[i] = static_cast<int32_t>(sample * 2147483647.0);
+                    ch = (ch + 1) % numCh;
+                }
             }
-        } else {
-            int ch = 0;
-            int numCh = (ctx->channelCount == 1) ? 1 : 2;
-            for (int i = 0; i < n; i++) {
-                double sample = static_cast<double>(in[i]);
-                sample = ctx->eq.process_sample(ch, sample);
-                if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
-                out[i] = static_cast<int32_t>(sample * 2147483647.0);
-                ch = (ch + 1) % numCh;
-            }
-        }
-        ssize_t r = s_write(ctx->mem, out, n * sizeof(int32_t), true);
-        written = r > 0 ? (r / sizeof(int32_t)) * sizeof(float) : r;
-    } else if (ctx->inputEncoding == 2 && ctx->outputFormat == AUDIO_FORMAT_PCM_16_BIT) {
-        if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
-            written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
-        } else {
+            ssize_t r = s_write(ctx->mem, out, n * sizeof(int32_t), true);
+            written = r > 0 ? (r / sizeof(int32_t)) * sizeof(float) : r;
+        } else if (ctx->inputEncoding == 2) {
+            // Source: Int16 -> Output: 32-bit Integer PCM (Q31)
             const int n = sizeInBytes / sizeof(int16_t);
             ctx->convBuf.resize(n);
             const int16_t* __restrict in = reinterpret_cast<const int16_t*>(srcPtr);
+            int32_t* __restrict out = ctx->convBuf.data();
+            if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+                for (int i = 0; i < n; i++) {
+                    out[i] = static_cast<int32_t>(in[i]) << 16;
+                }
+            } else {
+                int ch = 0;
+                int numCh = (ctx->channelCount == 1) ? 1 : 2;
+                for (int i = 0; i < n; i++) {
+                    double sample = static_cast<double>(in[i]) / 32768.0;
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    out[i] = static_cast<int32_t>(sample * 2147483647.0);
+                    ch = (ch + 1) % numCh;
+                }
+            }
+            ssize_t r = s_write(ctx->mem, out, n * sizeof(int32_t), true);
+            written = r > 0 ? (r / sizeof(int32_t)) * sizeof(int16_t) : r;
+        } else {
+            written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
+        }
+    } else {
+        // Fallback: 16-bit hardware output mode
+        if (ctx->inputEncoding == 2) {
+            if (!ctx->eq.enabled.load(std::memory_order_relaxed) || ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+                written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
+            } else {
+                const int n = sizeInBytes / sizeof(int16_t);
+                ctx->convBuf.resize(n);
+                const int16_t* __restrict in = reinterpret_cast<const int16_t*>(srcPtr);
+                int16_t* __restrict out = reinterpret_cast<int16_t*>(ctx->convBuf.data());
+                int ch = 0;
+                int numCh = (ctx->channelCount == 1) ? 1 : 2;
+                for (int i = 0; i < n; i++) {
+                    double sample = static_cast<double>(in[i]) / 32768.0;
+                    sample = ctx->eq.process_sample(ch, sample);
+                    if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
+                    out[i] = static_cast<int16_t>(sample * 32767.0);
+                    ch = (ch + 1) % numCh;
+                }
+                written = s_write(ctx->mem, out, sizeInBytes, true);
+            }
+        } else if (ctx->inputEncoding == 4) {
+            const int n = sizeInBytes / sizeof(float);
+            ctx->convBuf.resize((n + 1) / 2);
+            const float* __restrict in = reinterpret_cast<const float*>(srcPtr);
             int16_t* __restrict out = reinterpret_cast<int16_t*>(ctx->convBuf.data());
             int ch = 0;
             int numCh = (ctx->channelCount == 1) ? 1 : 2;
             for (int i = 0; i < n; i++) {
-                double sample = static_cast<double>(in[i]) / 32768.0;
-                sample = ctx->eq.process_sample(ch, sample);
+                double sample = static_cast<double>(in[i]);
+                if (ctx->eq.enabled.load(std::memory_order_relaxed) && !ctx->eq.is_flat.load(std::memory_order_relaxed)) {
+                    sample = ctx->eq.process_sample(ch, sample);
+                }
                 if (sample > 1.0) sample = 1.0; else if (sample < -1.0) sample = -1.0;
                 out[i] = static_cast<int16_t>(sample * 32767.0);
                 ch = (ch + 1) % numCh;
             }
-            written = s_write(ctx->mem, out, sizeInBytes, true);
+            ssize_t r = s_write(ctx->mem, out, n * sizeof(int16_t), true);
+            written = r > 0 ? (r / sizeof(int16_t)) * sizeof(float) : r;
+        } else {
+            written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
         }
-    } else {
-        written = s_write(ctx->mem, srcPtr, sizeInBytes, true);
     }
 
     if (arr && elems) env->ReleaseByteArrayElements(arr, elems, JNI_ABORT);
@@ -468,6 +569,13 @@ JNIEXPORT jint JNICALL
 Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeGetSampleRate(JNIEnv*, jclass, jlong h) {
     auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
     return ctx ? (jint)ctx->sampleRate : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeGetBitDepth(JNIEnv*, jclass, jlong h) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (!ctx) return 16;
+    return (ctx->outputFormat == AUDIO_FORMAT_PCM_32_BIT) ? 32 : 16;
 }
 
 JNIEXPORT void JNICALL
