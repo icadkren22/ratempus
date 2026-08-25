@@ -14,6 +14,8 @@
 #include <vector>
 #include <atomic>
 #include <time.h>
+#include <sys/resource.h>
+#include <sched.h>
 #include "dsp_eq.h"
 
 #define TAG "UsbExclusiveNative"
@@ -220,6 +222,19 @@ static void fill_urb(UsbAudioCtx* ctx, UrbSlot* slot) {
 
 static void* urb_thread(void* arg) {
     auto* ctx = reinterpret_cast<UsbAudioCtx*>(arg);
+
+    // Elevate to Android URGENT_AUDIO priority (nice -19) to match AudioFlinger
+    setpriority(PRIO_PROCESS, 0, -19);
+
+    // Attempt SCHED_FIFO real-time priority for lowest possible scheduling jitter
+    struct sched_param sp{};
+    sp.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0) {
+        LOGW("SCHED_FIFO not granted (errno=%d), running at nice -19", errno);
+    } else {
+        LOGI("SCHED_FIFO granted: priority=%d", sp.sched_priority);
+    }
+
     LOGI("URB thread started: ep=0x%02x maxPkt=%d sr=%u frameSz=%d",
          ctx->ep_addr, ctx->max_packet_size, ctx->sample_rate, ctx->frame_size);
 
