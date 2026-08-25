@@ -26,3 +26,11 @@
 
 -keep class **.reflect.TypeToken { *; }
 -keep class * extends **.reflect.TypeToken
+
+# Preserve all native method names and their enclosing classes for JNI binding
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# Preserve audio JNI bridge classes and data models
+-keep class com.eddyizm.tempus.audio.** { *; }
