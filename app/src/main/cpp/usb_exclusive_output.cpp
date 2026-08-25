@@ -275,9 +275,6 @@ static void* urb_thread(void* arg) {
         }
     }
 
-    for (auto* slot : ctx->urb_slots) {
-        ioctl(ctx->fd, USBDEVFS_DISCARDURB, slot->urb);
-    }
     LOGI("URB thread exited");
     return nullptr;
 }
