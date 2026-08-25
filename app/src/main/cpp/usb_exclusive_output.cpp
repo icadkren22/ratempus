@@ -39,10 +39,10 @@
 
 // 8 microframe packets per URB = 1 ms per URB for High-Speed (8000 microframes/sec)
 #define PACKETS_PER_URB 8
-#define NUM_URBS        8
+#define NUM_URBS        16
 
-// 128 KB Ring Buffer (~80ms latency at 192kHz stereo 32-bit, frame-aligned)
-static const int RING_SIZE = 128 * 1024;
+// 256 KB Ring Buffer (~330ms latency at 96kHz stereo 32-bit, frame-aligned)
+static const int RING_SIZE = 256 * 1024;
 static uint8_t  g_ring[RING_SIZE];
 static std::atomic<int> g_ring_write{0};
 static std::atomic<int> g_ring_read{0};
@@ -232,17 +232,14 @@ static void* urb_thread(void* arg) {
 
     while (ctx->running.load(std::memory_order_relaxed)) {
         struct usbdevfs_urb* reaped = nullptr;
-        int rc = ioctl(ctx->fd, USBDEVFS_REAPURBNDELAY, &reaped);
+        int rc = ioctl(ctx->fd, USBDEVFS_REAPURB, &reaped);
         if (rc < 0) {
-            if (errno == EAGAIN) {
-                usleep(250);
-                continue;
-            }
-            if (errno == ENODEV || errno == EBADF || errno == ESHUTDOWN) {
-                LOGW("USB device disconnected (errno=%d)", errno);
+            if (errno == EINTR) continue;
+            if (!ctx->running.load(std::memory_order_relaxed)) break;
+            if (errno == ENODEV || errno == EBADF || errno == ESHUTDOWN || errno == ENOENT) {
+                LOGW("USB device disconnected/stopped (errno=%d)", errno);
                 break;
             }
-            usleep(500);
             continue;
         }
 
@@ -251,6 +248,8 @@ static void* urb_thread(void* arg) {
             if (s->urb == reaped) { slot = s; break; }
         }
         if (!slot) continue;
+
+        if (!ctx->running.load(std::memory_order_relaxed)) break;
 
         fill_urb(ctx, slot);
         if (ioctl(ctx->fd, USBDEVFS_SUBMITURB, slot->urb) < 0) {
@@ -789,6 +788,9 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeStop(
     if (!ctx) return;
     set_hardware_mute(ctx->fd, JM6PRO2_FU_ID, JM6PRO2_AC_IFACE, 1);
     if (ctx->running.exchange(false)) {
+        for (auto* slot : ctx->urb_slots) {
+            ioctl(ctx->fd, USBDEVFS_DISCARDURB, slot->urb);
+        }
         pthread_join(ctx->stream_thread, nullptr);
     }
 }
@@ -800,6 +802,9 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeClose(
     if (!ctx) return;
 
     if (ctx->running.exchange(false)) {
+        for (auto* slot : ctx->urb_slots) {
+            ioctl(ctx->fd, USBDEVFS_DISCARDURB, slot->urb);
+        }
         pthread_join(ctx->stream_thread, nullptr);
     }
 
