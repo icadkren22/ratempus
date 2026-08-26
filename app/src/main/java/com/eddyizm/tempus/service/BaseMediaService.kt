@@ -1093,7 +1093,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean
             ): AudioSink {
-                val floatOutput = enableFloatOutput || (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && Preferences.isDirectHdEnabled())
+                val floatOutput = enableFloatOutput || Preferences.isDirectHdEnabled()
                 return DefaultAudioSink.Builder(context)
                     .setAudioProcessors(arrayOf(ReplayGainUtil.getAudioProcessor(), EqualizerAudioProcessor.getInstance()))
                     .setEnableFloatOutput(floatOutput)
