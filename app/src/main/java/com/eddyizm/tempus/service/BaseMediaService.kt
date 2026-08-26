@@ -1033,6 +1033,61 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                 setExtensionRendererMode(extensionRendererMode)
             }
 
+            override fun buildAudioRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                audioSink: AudioSink,
+                eventHandler: Handler,
+                eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
+                out: ArrayList<androidx.media3.exoplayer.Renderer>
+            ) {
+                // MediaCodec renderer: On Android < 10, reject 24-bit FLAC so it falls back to FFmpeg
+                val mediaCodecAudioRenderer = object : androidx.media3.exoplayer.audio.MediaCodecAudioRenderer(
+                    context,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    audioSink
+                ) {
+                    override fun supportsFormat(
+                        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                        format: Format
+                    ): Int {
+                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q &&
+                            MimeTypes.AUDIO_FLAC.equals(format.sampleMimeType, ignoreCase = true) &&
+                            (format.pcmEncoding == C.ENCODING_PCM_24BIT || format.pcmEncoding == C.ENCODING_PCM_32BIT)
+                        ) {
+                            return androidx.media3.exoplayer.RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE)
+                        }
+                        return super.supportsFormat(mediaCodecSelector, format)
+                    }
+                }
+                out.add(mediaCodecAudioRenderer)
+
+                if (extensionRendererMode == EXTENSION_RENDERER_MODE_OFF) {
+                    return
+                }
+                var extensionRendererIndex = out.size
+                if (extensionRendererMode == EXTENSION_RENDERER_MODE_PREFER) {
+                    extensionRendererIndex--
+                }
+                try {
+                    val clazz = Class.forName("androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer")
+                    val constructor = clazz.getConstructor(
+                        Handler::class.java,
+                        androidx.media3.exoplayer.audio.AudioRendererEventListener::class.java,
+                        AudioSink::class.java
+                    )
+                    val renderer = constructor.newInstance(eventHandler, eventListener, audioSink) as androidx.media3.exoplayer.Renderer
+                    out.add(extensionRendererIndex, renderer)
+                } catch (e: Exception) {
+                    // FfmpegAudioRenderer not available
+                }
+            }
+
             override fun buildAudioSink(
                 context: Context,
                 enableFloatOutput: Boolean,

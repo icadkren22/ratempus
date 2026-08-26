@@ -8,7 +8,7 @@ ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
 NDK_PATH="${NDK_PATH:-$ANDROID_SDK_ROOT/ndk/29.0.14206865}"
 HOST_PLATFORM="linux-x86_64"
 ANDROID_API=24
-ENABLED_DECODERS=(alac)
+ENABLED_DECODERS=(alac flac)
 MEDIA3_VERSION="1.9.2"
 # Full commit hash, and must match the FFmpeg srclib pin in the F-Droid recipe
 FFMPEG_COMMIT="bda1c6f1f9041910ec5b2c279a08861203a1c95c"
