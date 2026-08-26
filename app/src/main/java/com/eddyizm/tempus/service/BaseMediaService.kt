@@ -1052,7 +1052,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                 eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
                 out: ArrayList<androidx.media3.exoplayer.Renderer>
             ) {
-                // MediaCodec renderer: On Android < 10, reject 24-bit FLAC so it falls back to FFmpeg
+                // MediaCodec renderer: On Android < 10, reject all FLAC so it falls back to FFmpeg software decoder
                 val mediaCodecAudioRenderer = object : androidx.media3.exoplayer.audio.MediaCodecAudioRenderer(
                     context,
                     mediaCodecSelector,
@@ -1066,8 +1066,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                         format: Format
                     ): Int {
                         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q &&
-                            MimeTypes.AUDIO_FLAC.equals(format.sampleMimeType, ignoreCase = true) &&
-                            (format.pcmEncoding == C.ENCODING_PCM_24BIT || format.pcmEncoding == C.ENCODING_PCM_32BIT)
+                            MimeTypes.AUDIO_FLAC.equals(format.sampleMimeType, ignoreCase = true)
                         ) {
                             return androidx.media3.exoplayer.RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE)
                         }

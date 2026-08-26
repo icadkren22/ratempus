@@ -274,23 +274,32 @@ private class NativeDirectAudioOutput(
     private var playbackParams = PlaybackParameters.DEFAULT
     private var volume = 1.0f
 
+    private val srcBytesPerSample = if (outputConfig.encoding == android.media.AudioFormat.ENCODING_PCM_16BIT) 2 else 4
+    private val srcChannels = if (outputConfig.channelMask == android.media.AudioFormat.CHANNEL_OUT_MONO) 1 else 2
+    private val srcFrameSize = srcChannels * srcBytesPerSample
+
     private var isPlaying = false
-    private var startSystemTimeUs = 0L
     private var lastNotifiedAdvancingMs = 0L
+    private var playEpochNanos = 0L
+    private var pausedPositionUs = 0L
+    private var totalWrittenFrames = 0L
     private val silentTracker = SilentAudioTracker()
 
     override fun play() {
-        isPlaying = true
-        if (startSystemTimeUs == 0L) {
-            startSystemTimeUs = SystemClock.elapsedRealtimeNanos() / 1000L
+        if (!isPlaying) {
+            playEpochNanos = System.nanoTime() - pausedPositionUs * 1_000L
+            silentTracker.play()
         }
-        silentTracker.play()
+        isPlaying = true
         nativeTrack.play()
         val nowMs = SystemClock.elapsedRealtime()
         listeners.forEach { it.onPositionAdvancing(nowMs) }
     }
 
     override fun pause() {
+        if (isPlaying) {
+            pausedPositionUs = ((System.nanoTime() - playEpochNanos) / 1_000L).coerceAtLeast(0L)
+        }
         isPlaying = false
         silentTracker.pause()
         nativeTrack.pause()
@@ -298,24 +307,26 @@ private class NativeDirectAudioOutput(
 
     override fun write(byteBuffer: ByteBuffer, sizeInBytes: Int, presentationTimeUs: Long): Boolean {
         if (!byteBuffer.hasRemaining()) return true
-        val frameSize = if (outputConfig.channelMask == android.media.AudioFormat.CHANNEL_OUT_MONO) 4 else 8
-        val bytesToWrite = (byteBuffer.remaining() / frameSize) * frameSize
+        val bytesToWrite = (byteBuffer.remaining() / srcFrameSize) * srcFrameSize
         if (bytesToWrite <= 0) return true
         val written = nativeTrack.write(byteBuffer, bytesToWrite, 0L)
         if (written > 0) {
+            totalWrittenFrames += (written / srcFrameSize).toLong()
             byteBuffer.position(byteBuffer.position() + written)
             val nowMs = SystemClock.elapsedRealtime()
             if (nowMs - lastNotifiedAdvancingMs > 50) {
                 lastNotifiedAdvancingMs = nowMs
                 listeners.forEach { it.onPositionAdvancing(nowMs) }
             }
-            return byteBuffer.remaining() < frameSize
+            return byteBuffer.remaining() < srcFrameSize
         }
         return false
     }
 
     override fun flush() {
-        startSystemTimeUs = SystemClock.elapsedRealtimeNanos() / 1000L
+        pausedPositionUs = 0L
+        playEpochNanos = System.nanoTime()
+        totalWrittenFrames = 0L
         nativeTrack.flush()
         if (isPlaying) {
             nativeTrack.play()
@@ -323,6 +334,9 @@ private class NativeDirectAudioOutput(
     }
 
     override fun stop() {
+        if (isPlaying) {
+            pausedPositionUs = ((System.nanoTime() - playEpochNanos) / 1_000L).coerceAtLeast(0L)
+        }
         isPlaying = false
         silentTracker.stop()
         nativeTrack.stop()
@@ -344,17 +358,36 @@ private class NativeDirectAudioOutput(
 
     override fun getAudioSessionId(): Int = outputConfig.audioSessionId
 
-    override fun getSampleRate(): Int = nativeTrack.actualSampleRate
+    override fun getSampleRate(): Int = outputConfig.sampleRate
 
-    override fun getBufferSizeInFrames(): Long = (outputConfig.bufferSize / 8).toLong()
+    override fun getBufferSizeInFrames(): Long = (outputConfig.bufferSize / srcFrameSize).toLong()
 
     override fun getPositionUs(): Long {
-        val hwPos = nativeTrack.getPositionUs()
-        if (hwPos > 0) return hwPos
-        if (isPlaying && startSystemTimeUs > 0) {
-            return (SystemClock.elapsedRealtimeNanos() / 1000L) - startSystemTimeUs
+        val sampleRate = outputConfig.sampleRate
+        val maxWrittenUs = if (sampleRate > 0) {
+            (totalWrittenFrames * 1_000_000L) / sampleRate
+        } else {
+            0L
         }
-        return 0L
+
+        val elapsedUs = if (isPlaying && playEpochNanos > 0) {
+            ((System.nanoTime() - playEpochNanos) / 1_000L).coerceAtLeast(0L)
+        } else {
+            pausedPositionUs
+        }
+
+        // When the audio finishes playing all written frames, allow position to reach maxWrittenUs
+        // so DefaultAudioSink.hasPendingData() returns false and transitions to the next track!
+        if (totalWrittenFrames > 0 && elapsedUs >= maxWrittenUs) {
+            return maxWrittenUs
+        }
+
+        val hwPos = nativeTrack.getPositionUs()
+        if (hwPos > 0 && hwPos <= maxWrittenUs) {
+            return maxOf(hwPos, elapsedUs.coerceAtMost(maxWrittenUs))
+        }
+
+        return elapsedUs.coerceAtMost(maxWrittenUs)
     }
 
     override fun getPlaybackParameters(): PlaybackParameters = playbackParams
