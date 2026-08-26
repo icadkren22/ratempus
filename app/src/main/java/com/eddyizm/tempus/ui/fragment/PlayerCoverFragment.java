@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import java.util.ArrayList;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.media3.common.MediaItem;
@@ -191,6 +192,13 @@ public class PlayerCoverFragment extends Fragment {
         setCover(mediaBrowser.getMediaMetadata());
 
         mediaBrowser.addListener(new Player.Listener() {
+            @Override
+            public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
+                MediaMetadata metadata = mediaItem != null ? mediaItem.mediaMetadata : mediaBrowser.getMediaMetadata();
+                setCover(metadata);
+                toggleOverlayVisibility(false);
+            }
+
             @Override
             public void onMediaMetadataChanged(@NonNull MediaMetadata mediaMetadata) {
                 setCover(mediaMetadata);

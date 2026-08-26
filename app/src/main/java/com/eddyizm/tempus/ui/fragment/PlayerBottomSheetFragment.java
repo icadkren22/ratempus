@@ -17,6 +17,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
@@ -145,6 +146,14 @@ public class PlayerBottomSheetFragment extends Fragment {
         setHeaderNextButtonState(mediaBrowser.hasNextMediaItem());
 
         mediaBrowser.addListener(new Player.Listener() {
+            @Override
+            public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
+                setMediaControllerUI(mediaBrowser);
+                setMetadata(mediaItem != null ? mediaItem.mediaMetadata : mediaBrowser.getMediaMetadata());
+                setContentDuration(mediaBrowser.getContentDuration());
+                setHeaderNextButtonState(mediaBrowser.hasNextMediaItem());
+            }
+
             @Override
             public void onMediaMetadataChanged(@NonNull MediaMetadata mediaMetadata) {
                 setMediaControllerUI(mediaBrowser);

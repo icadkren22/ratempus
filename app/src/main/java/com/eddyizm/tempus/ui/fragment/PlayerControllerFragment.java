@@ -27,6 +27,8 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.media3.common.Format;
+import androidx.annotation.Nullable;
+import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
@@ -265,6 +267,14 @@ public class PlayerControllerFragment extends Fragment {
         setMediaInfo(mediaBrowser.getMediaMetadata());
 
         mediaBrowser.addListener(new Player.Listener() {
+            @Override
+            public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
+                MediaMetadata metadata = mediaItem != null ? mediaItem.mediaMetadata : mediaBrowser.getMediaMetadata();
+                setMediaControllerUI(mediaBrowser);
+                setMetadata(metadata);
+                setMediaInfo(metadata);
+            }
+
             @Override
             public void onMediaMetadataChanged(@NonNull MediaMetadata mediaMetadata) {
                 setMediaControllerUI(mediaBrowser);
