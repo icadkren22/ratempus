@@ -123,19 +123,39 @@ public class AudioProcessDialog extends DialogFragment {
         // STAGE 2: Decoder Engine
         // ==========================================
         String mimeType = decoderFormat != null && decoderFormat.sampleMimeType != null ? decoderFormat.sampleMimeType : "audio/" + origSuffix.toLowerCase(Locale.US);
+        String activeDecoder = AudioOutputTracker.getCurrentDecoderName();
         String decoderName;
-        if (mimeType.contains("flac")) {
-            decoderName = "Media3 FLAC Decoder";
-        } else if (mimeType.contains("opus")) {
-            decoderName = "Media3 Opus Decoder";
-        } else if (mimeType.contains("vorbis")) {
-            decoderName = "Media3 Vorbis Decoder";
-        } else if (mimeType.contains("mp4a") || mimeType.contains("aac")) {
-            decoderName = "MediaCodec AAC Hardware Decoder";
-        } else if (mimeType.contains("mpeg") || mimeType.contains("mp3")) {
-            decoderName = "MediaCodec MP3 Decoder";
+        if (activeDecoder != null && !activeDecoder.isEmpty()) {
+            String lower = activeDecoder.toLowerCase(Locale.US);
+            if (lower.contains("ffmpeg")) {
+                if (mimeType.contains("flac")) {
+                    decoderName = "FFmpeg FLAC Software Decoder";
+                } else if (mimeType.contains("alac")) {
+                    decoderName = "FFmpeg ALAC Software Decoder";
+                } else {
+                    decoderName = "FFmpeg Software Decoder (" + activeDecoder + ")";
+                }
+            } else if (activeDecoder.startsWith("OMX.google.") || activeDecoder.startsWith("c2.android.")) {
+                decoderName = "Android Software Decoder (" + activeDecoder + ")";
+            } else if (activeDecoder.startsWith("OMX.") || activeDecoder.startsWith("c2.")) {
+                decoderName = "MediaCodec Hardware Decoder (" + activeDecoder + ")";
+            } else {
+                decoderName = activeDecoder;
+            }
         } else {
-            decoderName = "Media3 Native";
+            if (mimeType.contains("flac")) {
+                decoderName = "MediaCodec FLAC Decoder";
+            } else if (mimeType.contains("opus")) {
+                decoderName = "Media3 Opus Decoder";
+            } else if (mimeType.contains("vorbis")) {
+                decoderName = "Media3 Vorbis Decoder";
+            } else if (mimeType.contains("mp4a") || mimeType.contains("aac")) {
+                decoderName = "MediaCodec AAC Hardware Decoder";
+            } else if (mimeType.contains("mpeg") || mimeType.contains("mp3")) {
+                decoderName = "MediaCodec MP3 Decoder";
+            } else {
+                decoderName = "Media3 Native";
+            }
         }
         bind.pipelineDecoderEngineVal.setText(decoderName);
 

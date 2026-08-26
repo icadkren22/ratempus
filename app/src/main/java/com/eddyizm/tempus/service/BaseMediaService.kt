@@ -746,6 +746,15 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
             ) {
                 AudioOutputTracker.updateAudioTrackConfig(audioTrackConfig)
             }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long
+            ) {
+                AudioOutputTracker.updateDecoderName(decoderName)
+            }
         })
     }
 

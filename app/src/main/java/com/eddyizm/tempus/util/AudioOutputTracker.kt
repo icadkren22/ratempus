@@ -19,6 +19,17 @@ object AudioOutputTracker {
     @Volatile
     private var currentUsbConfig: com.eddyizm.tempus.audio.usb.UsbAudioConfig? = null
 
+    @Volatile
+    private var currentDecoderName: String? = null
+
+    @JvmStatic
+    fun updateDecoderName(name: String?) {
+        currentDecoderName = name
+    }
+
+    @JvmStatic
+    fun getCurrentDecoderName(): String? = currentDecoderName
+
     @JvmStatic
     fun updateUsbAudioConfig(config: com.eddyizm.tempus.audio.usb.UsbAudioConfig?) {
         currentUsbConfig = config
