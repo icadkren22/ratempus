@@ -283,6 +283,7 @@ private class NativeDirectAudioOutput(
     private var playEpochNanos = 0L
     private var pausedPositionUs = 0L
     private var totalWrittenFrames = 0L
+    private var endOfStreamSignaled = false
     private val silentTracker = SilentAudioTracker()
 
     override fun play() {
@@ -327,6 +328,7 @@ private class NativeDirectAudioOutput(
         pausedPositionUs = 0L
         playEpochNanos = System.nanoTime()
         totalWrittenFrames = 0L
+        endOfStreamSignaled = false
         nativeTrack.flush()
         if (isPlaying) {
             nativeTrack.play()
@@ -370,15 +372,23 @@ private class NativeDirectAudioOutput(
             0L
         }
 
+        // If EOS was signaled and we have written frames, immediately report
+        // maxWrittenUs so DefaultAudioSink.hasPendingData() returns false.
+        // This is the primary path for clean track-end in both foreground and background.
+        if (endOfStreamSignaled && totalWrittenFrames > 0) {
+            return maxWrittenUs
+        }
+
         val elapsedUs = if (isPlaying && playEpochNanos > 0) {
             ((System.nanoTime() - playEpochNanos) / 1_000L).coerceAtLeast(0L)
         } else {
             pausedPositionUs
         }
 
-        // When the audio finishes playing all written frames, allow position to reach maxWrittenUs
-        // so DefaultAudioSink.hasPendingData() returns false and transitions to the next track!
-        if (totalWrittenFrames > 0 && elapsedUs >= maxWrittenUs) {
+        // Fallback: wall-clock caught up with (or exceeded) total written audio duration.
+        // Add 300ms grace period to tolerate background CPU scheduling jitter.
+        val graceUs = 300_000L
+        if (totalWrittenFrames > 0 && elapsedUs >= maxWrittenUs + graceUs) {
             return maxWrittenUs
         }
 
@@ -408,7 +418,11 @@ private class NativeDirectAudioOutput(
 
     override fun setOffloadDelayPadding(delayInFrames: Int, paddingInFrames: Int) {}
 
-    override fun setOffloadEndOfStream() {}
+    // ExoPlayer calls this when it has finished writing all frames for the current track.
+    // Use it as the authoritative end-of-stream signal instead of relying on wall clock alone.
+    override fun setOffloadEndOfStream() {
+        endOfStreamSignaled = true
+    }
 
     override fun setPlayerId(playerId: PlayerId) {}
 
