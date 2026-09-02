@@ -113,9 +113,11 @@ object AudioOutputTracker {
             val usb = currentUsbConfig
             if (usb != null && usb.sampleRate > 0) return formatSampleRate(usb.sampleRate)
         }
-        val config = currentConfig
-        if (config != null && config.sampleRate > 0) {
-            return formatSampleRate(config.sampleRate)
+        if (isDirectAudioSupported()) {
+            val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
+            if (track != null && track.isValid) {
+                return formatSampleRate(track.actualSampleRate)
+            }
         }
         val nativeRate = getHardwareSampleRate(context)
         return formatSampleRate(nativeRate)
@@ -266,24 +268,16 @@ object AudioOutputTracker {
             val bitDepth = "${usb?.bitDepth ?: 32}-bit"
             return "$bitDepth • $rate (UAC2 Exclusive)"
         }
-        val config = currentConfig
-        return if (config != null && config.sampleRate > 0) {
-            val rate = formatKhzShort(config.sampleRate)
-            val bitDepth = if (isDirectAudioSupported()) {
-                val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
-                "${track?.actualBitDepth ?: 32}-bit"
-            } else {
-                when (config.encoding) {
-                    C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_32BIT -> "32-bit"
-                    C.ENCODING_PCM_24BIT -> "24-bit"
-                    else -> "16-bit"
-                }
-            }
-            val driver = if (isDirectAudioSupported()) "Direct HD" else "AudioTrack"
-            "$bitDepth • $rate ($driver)"
-        } else {
-            if (isDirectAudioSupported()) "Direct HD" else "AudioTrack"
+        val activeDirectTrack = if (isDirectAudioSupported()) com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack() else null
+        if (activeDirectTrack != null && activeDirectTrack.isValid) {
+            val rate = formatKhzShort(activeDirectTrack.actualSampleRate)
+            val bitDepth = "${activeDirectTrack.actualBitDepth}-bit"
+            return "$bitDepth • $rate (Direct HD)"
         }
+        val config = currentConfig
+        val hwRate = if (context != null) getHardwareSampleRate(context) else (config?.sampleRate ?: 48000)
+        val rate = formatKhzShort(hwRate)
+        return "16-bit • $rate (AudioTrack)"
     }
 
     @JvmStatic
@@ -293,15 +287,17 @@ object AudioOutputTracker {
             val bitDepth = getOutputBitDepthString(context)
             return "OUT: $bitDepth • $sampleRate (UAC2 Exclusive)"
         }
-        return if (isDirectAudioSupported()) {
-            val sampleRate = getOutputSampleRateString(context).substringBefore(" (")
-            val bitDepth = getOutputBitDepthString(context)
-            val mode = if (currentConfig?.offload == true) "Offload" else "Direct HD"
-            "OUT: $bitDepth • $sampleRate ($mode)"
-        } else {
-            val hwRate = formatKhzShort(getHardwareSampleRate(context))
-            "OUT: 16-bit PCM • $hwRate (AudioTrack)"
+        if (isDirectAudioSupported()) {
+            val track = com.eddyizm.tempus.audio.NativeDirectAudioTrack.getActiveTrack()
+            if (track != null && track.isValid) {
+                val sampleRate = getOutputSampleRateString(context).substringBefore(" (")
+                val bitDepth = getOutputBitDepthString(context)
+                val mode = if (currentConfig?.offload == true) "Offload" else "Direct HD"
+                return "OUT: $bitDepth • $sampleRate ($mode)"
+            }
         }
+        val hwRate = formatKhzShort(getHardwareSampleRate(context))
+        return "OUT: 16-bit PCM • $hwRate (AudioTrack)"
     }
 
     private fun formatKhzShort(sampleRate: Int): String {

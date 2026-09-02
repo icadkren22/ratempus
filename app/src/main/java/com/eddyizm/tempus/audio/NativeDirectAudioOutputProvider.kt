@@ -310,6 +310,7 @@ private class NativeDirectAudioOutput(
         if (!byteBuffer.hasRemaining()) return true
         val bytesToWrite = (byteBuffer.remaining() / srcFrameSize) * srcFrameSize
         if (bytesToWrite <= 0) return true
+        endOfStreamSignaled = false
         val written = nativeTrack.write(byteBuffer, bytesToWrite, 0L)
         if (written > 0) {
             totalWrittenFrames += (written / srcFrameSize).toLong()
@@ -372,29 +373,26 @@ private class NativeDirectAudioOutput(
             0L
         }
 
-        // If EOS was signaled and we have written frames, immediately report
-        // maxWrittenUs so DefaultAudioSink.hasPendingData() returns false.
-        // This is the primary path for clean track-end in both foreground and background.
-        if (endOfStreamSignaled && totalWrittenFrames > 0) {
-            return maxWrittenUs
-        }
-
         val elapsedUs = if (isPlaying && playEpochNanos > 0) {
             ((System.nanoTime() - playEpochNanos) / 1_000L).coerceAtLeast(0L)
         } else {
             pausedPositionUs
         }
 
-        // Fallback: wall-clock caught up with (or exceeded) total written audio duration.
-        // Add 300ms grace period to tolerate background CPU scheduling jitter.
-        val graceUs = 300_000L
-        if (totalWrittenFrames > 0 && elapsedUs >= maxWrittenUs + graceUs) {
-            return maxWrittenUs
+        val hwPos = nativeTrack.getPositionUs()
+        if (hwPos > 0) {
+            if (hwPos >= maxWrittenUs) {
+                return maxWrittenUs
+            }
+            if (endOfStreamSignaled && elapsedUs >= maxWrittenUs) {
+                return maxWrittenUs
+            }
+            return hwPos
         }
 
-        val hwPos = nativeTrack.getPositionUs()
-        if (hwPos > 0 && hwPos <= maxWrittenUs) {
-            return maxOf(hwPos, elapsedUs.coerceAtMost(maxWrittenUs))
+        // Software timing fallback if hardware position is 0
+        if (endOfStreamSignaled && totalWrittenFrames > 0 && elapsedUs >= maxWrittenUs) {
+            return maxWrittenUs
         }
 
         return elapsedUs.coerceAtMost(maxWrittenUs)
