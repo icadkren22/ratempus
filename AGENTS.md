@@ -2,8 +2,8 @@
 
 ## Project Overview
 **Tempus** is an open-source Android music client for Subsonic servers. Two product flavors:
-- **tempus** (`com.eddyizm.tempus`) - GitHub release with Android Auto & Chromecast
-- **degoogled** (`com.eddyizm.degoogled.tempus`) - IzzyOnDroid/F-Droid release, no Google services
+- **tempus** (`id.ica2322.ratempus`) - GitHub release with Android Auto & Chromecast
+- **degoogled** (`id.ica2322.degoogled.ratempus`) - IzzyOnDroid/F-Droid release, no Google services
 
 ## Build & Development
 
@@ -104,7 +104,7 @@
 | Generate lint baseline | `./gradlew updateLintBaseline` |
 
 ## Gotchas
-- **Two app IDs**: `com.eddyizm.tempus` vs `com.eddyizm.degoogled.tempus` - debug adds `.debug` suffix
+- **Two app IDs**: `id.ica2322.ratempus` vs `id.ica2322.degoogled.ratempus` - debug adds `.debug` suffix
 - **Media3 Cast** only in `tempus` flavor (`tempusImplementation libs.media3.cast`)
 - **FFmpeg decoder** is a local AAR (`libs/lib-decoder-ffmpeg-release.aar`), built separately via `bin/build.sh`
 - **Room schemas** committed to `app/schemas/` - update on schema changes

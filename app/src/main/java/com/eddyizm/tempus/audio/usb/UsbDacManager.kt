@@ -12,7 +12,7 @@ import android.os.Build
 import android.util.Log
 
 private const val TAG = "UsbDacManager"
-private const val ACTION_USB_PERMISSION = "com.eddyizm.tempus.USB_PERMISSION"
+private const val ACTION_USB_PERMISSION = "id.ica2322.ratempus.USB_PERMISSION"
 
 /**
  * Manages USB DAC discovery, attachment/detachment lifecycle, and USB permissions.

@@ -14,8 +14,8 @@ android {
         //noinspection OldTargetApi
         targetSdk = 37
 
-        versionCode 6
-        versionName '0.0.6'
+        versionCode 1
+        versionName '0.1.0'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
 
         javaCompileOptions {
@@ -70,12 +70,12 @@ android {
     productFlavors {
         tempus {
             dimension = "default"
-            applicationId = 'com.eddyizm.tempus'
+            applicationId = 'id.ica2322.ratempus'
         }
 
         degoogled {
             dimension = "default"
-            applicationId = "com.eddyizm.degoogled.tempus"
+            applicationId = "id.ica2322.degoogled.ratempus"
         }
     }
 
