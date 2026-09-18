@@ -281,37 +281,87 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
     private var lastRadioArtist: String? = null
     private var lastRadioTitle: String? = null
 
-    // Throttle for onPlayerError re-prepare recovery (see #682).
-    private var lastPlayerErrorRecoveryMs = 0L
-    private val playerErrorRecoveryThrottleMs = 5_000L
+    // Retry recovery for onPlayerError with backoff (see #682 and unstable network transitions).
+    private var playerErrorRetryCount = 0
+    private val maxPlayerErrorRetries = 4
+    private var pendingErrorRecoveryRunnable: Runnable? = null
+
+    private fun cancelPendingErrorRecovery() {
+        pendingErrorRecoveryRunnable?.let {
+            widgetUpdateHandler.removeCallbacks(it)
+            pendingErrorRecoveryRunnable = null
+        }
+    }
+
+    private fun isRecoverableError(error: PlaybackException): Boolean {
+        if (error.errorCode in 2000..2999) {
+            if (error.errorCode == PlaybackException.ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NO_PERMISSION
+            ) {
+                return false
+            }
+            return true
+        }
+        var cause: Throwable? = error.cause
+        while (cause != null) {
+            if (cause is java.io.IOException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
+    }
 
     fun initializePlayerListener(player: Player) {
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                // A network switch (WiFi <-> mobile) surfaces here as a source/network
+                // A network switch (WiFi <-> mobile) or connection drop surfaces here as an IO/network
                 // error. Without recovery the player goes idle and stays silent until the
-                // app is restarted (issue #682). Re-prepare to resume from the current
-                // position, but only for recoverable IO errors and throttled so a permanent
-                // failure (bad URL, auth) can't spin in an endless prepare loop.
-                Log.w(TAG, "onPlayerError: ${error.errorCodeName}", error)
+                // app is restarted or a media button is clicked (issue #682).
+                // Re-prepare with exponential backoff so unstable network can recover automatically.
+                Log.w(TAG, "onPlayerError: ${error.errorCodeName} (code=${error.errorCode})", error)
 
-                val recoverable = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-                    PlaybackException.ERROR_CODE_IO_UNSPECIFIED -> true
-                    else -> false
+                if (!isRecoverableError(error)) {
+                    playerErrorRetryCount = 0
+                    cancelPendingErrorRecovery()
+                    return
                 }
-                if (!recoverable) return
 
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastPlayerErrorRecoveryMs >= playerErrorRecoveryThrottleMs) {
-                    lastPlayerErrorRecoveryMs = now
-                    player.prepare()
+                if (playerErrorRetryCount >= maxPlayerErrorRetries) {
+                    Log.w(TAG, "onPlayerError: max retries ($maxPlayerErrorRetries) reached, awaiting network change or user interaction")
+                    cancelPendingErrorRecovery()
+                    return
                 }
+
+                val delayMs = when (playerErrorRetryCount) {
+                    0 -> 500L
+                    1 -> 1500L
+                    2 -> 3000L
+                    else -> 5000L
+                }
+                playerErrorRetryCount++
+                cancelPendingErrorRecovery()
+
+                Log.i(TAG, "Scheduling player error recovery attempt $playerErrorRetryCount in ${delayMs}ms")
+                val runnable = Runnable {
+                    pendingErrorRecoveryRunnable = null
+                    if (serviceDestroyed) return@Runnable
+                    if (player.playbackState == Player.STATE_IDLE && player.currentMediaItem != null) {
+                        Log.i(TAG, "Executing error recovery prepare (attempt $playerErrorRetryCount)")
+                        player.prepare()
+                        if (player.playWhenReady) {
+                            player.play()
+                        }
+                    }
+                }
+                pendingErrorRecoveryRunnable = runnable
+                widgetUpdateHandler.postDelayed(runnable, delayMs)
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 Log.d(TAG, "onMediaItemTransition" + player.currentMediaItemIndex)
+                playerErrorRetryCount = 0
+                cancelPendingErrorRecovery()
                 if (mediaItem == null) return
                 ReplayGainUtil.applyGain(player, mediaItem)
 
@@ -514,6 +564,10 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 Log.d(TAG, "onIsPlayingChanged " + player.currentMediaItemIndex)
+                if (isPlaying) {
+                    playerErrorRetryCount = 0
+                    cancelPendingErrorRecovery()
+                }
                 if (!isPlaying) {
                     MediaManager.setPlayingPausedTimestamp(
                         player.currentMediaItem,
@@ -535,8 +589,12 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
 
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                Log.d(TAG, "onPlaybackStateChanged")
+                Log.d(TAG, "onPlaybackStateChanged $playbackState")
                 super.onPlaybackStateChanged(playbackState)
+                if (playbackState == Player.STATE_READY) {
+                    playerErrorRetryCount = 0
+                    cancelPendingErrorRecovery()
+                }
                 if (!player.hasNextMediaItem() &&
                     playbackState == Player.STATE_ENDED &&
                     player.mediaMetadata.extras?.getString("type") == Constants.MEDIA_TYPE_MUSIC
@@ -700,6 +758,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
     override fun onDestroy() {
         QueuePreloader.cancel()
         serviceDestroyed = true
+        cancelPendingErrorRecovery()
         // Process scoped, so it outlives the service unless it is cleared here.
         MediaServiceExtensionRegistry.handler = null
         releaseNetworkCallback()
@@ -1119,6 +1178,15 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
         // rather than as a wifi flag, which cannot separate a handover gap from cellular. Issue 198.
         private var lastTransport = MusicUtil.getActiveTransport()
 
+        override fun onAvailable(network: Network) {
+            super.onAvailable(network)
+            Log.d(TAG, "Network became available")
+            widgetUpdateHandler.post {
+                if (serviceDestroyed) return@post
+                attemptNetworkRecovery()
+            }
+        }
+
         override fun onCapabilitiesChanged(
             network: Network,
             networkCapabilities: NetworkCapabilities
@@ -1139,6 +1207,18 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                 // preload() evaluates the network itself, and runs on every transport change,
                 // including one the queue is not resolved against, since it gates on metered.
                 QueuePreloader.preload(this@BaseMediaService, mediaLibrarySession.player)
+                attemptNetworkRecovery()
+            }
+        }
+
+        private fun attemptNetworkRecovery() {
+            val player = mediaLibrarySession.player
+            if (player.playbackState == Player.STATE_IDLE && player.currentMediaItem != null && player.playWhenReady) {
+                Log.i(TAG, "Network available/changed: recovering player from STATE_IDLE")
+                playerErrorRetryCount = 0
+                cancelPendingErrorRecovery()
+                player.prepare()
+                player.play()
             }
         }
     }
