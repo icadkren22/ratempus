@@ -118,7 +118,11 @@ class TranscodingMediaSource(
 
         override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
             localCallback = callback
-            currentPeriod.prepare(this, positionUs)
+            if (positionUs > 0L && currentOffsetUs == 0L) {
+                reloadSource(positionUs)
+            } else {
+                currentPeriod.prepare(this, positionUs)
+            }
         }
 
         override fun maybeThrowPrepareError() {
@@ -236,8 +240,12 @@ class TranscodingMediaSource(
         override fun onPrepared(mediaPeriod: MediaPeriod) {
             if (isReloading && mediaPeriod == currentPeriod) {
                 isReloading = false
-                restoreTracks()
-                localCallback?.onContinueLoadingRequested(this)
+                if (lastSelections != null) {
+                    restoreTracks()
+                    localCallback?.onContinueLoadingRequested(this)
+                } else {
+                    localCallback?.onPrepared(this)
+                }
             } else {
                 localCallback?.onPrepared(this)
             }

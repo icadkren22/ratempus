@@ -394,6 +394,23 @@ open class BaseSessionCallback(
     // Custom commands dispatcher
     // ─────────────────────────────────────────────────────────────
 
+    @Suppress("DEPRECATION")
+    override fun onPlayerCommandRequest(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        playerCommand: @Player.Command Int
+    ): Int {
+        if (playerCommand == Player.COMMAND_PLAY_PAUSE) {
+            val player = session.player
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            } else if (player.playbackState == Player.STATE_ENDED) {
+                player.seekTo(player.currentMediaItemIndex, 0L)
+            }
+        }
+        return super.onPlayerCommandRequest(session, controller, playerCommand)
+    }
+
     @OptIn(UnstableApi::class)
     override fun onCustomCommand(
         session: MediaSession,

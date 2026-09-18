@@ -266,12 +266,17 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                 0L
             }.let { if (it < 0L) 0L else it }
 
+            val currentMedia = mediaItems.getOrNull(lastIndex)
+            val durationSec = currentMedia?.mediaMetadata?.extras?.getInt("duration") ?: 0
+            val durationMs = durationSec * 1000L
+            val safePosition = if (durationMs > 2000L && lastPosition >= durationMs - 2000L) 0L else lastPosition
+
             widgetUpdateHandler.post {
                 // onDestroy may have released the player while this queue was still mapping, and
                 // the mediaItemCount check below cannot detect a released player, so bail first.
                 if (serviceDestroyed) return@post
                 if (player.mediaItemCount > 0) return@post
-                player.setMediaItems(mediaItems, lastIndex, lastPosition)
+                player.setMediaItems(mediaItems, lastIndex, safePosition)
                 player.prepare()
                 updateWidget(player)
             }
