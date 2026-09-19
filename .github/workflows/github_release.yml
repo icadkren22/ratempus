@@ -25,8 +25,8 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
 
       - name: Install NDK 28.0.12674087 and Accept Licenses
         run: |
