@@ -1,8 +1,8 @@
 package com.eddyizm.tempus.service
 
+import android.app.PendingIntent
 import android.app.PendingIntent.FLAG_IMMUTABLE
 import android.app.PendingIntent.FLAG_UPDATE_CURRENT
-import android.app.TaskStackBuilder
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -254,17 +254,22 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
             val mediaItems = MappingUtil.mapMediaItems(storedQueue)
             if (mediaItems.isEmpty()) return@Thread
 
-            val lastIndex = try {
-                queueRepository.lastPlayedMediaIndex
+            val lastPlayed = try {
+                queueRepository.lastPlayedMedia
             } catch (_: Exception) {
-                0
-            }.coerceIn(0, mediaItems.size - 1)
+                null
+            }
 
-            val lastPosition = try {
-                queueRepository.lastPlayedMediaTimestamp
-            } catch (_: Exception) {
-                0L
-            }.let { if (it < 0L) 0L else it }
+            var lastIndex = 0
+            var lastPosition = 0L
+
+            if (lastPlayed != null) {
+                val found = MappingUtil.indexOfMediaId(mediaItems, lastPlayed.id)
+                if (found >= 0) {
+                    lastIndex = found
+                    lastPosition = lastPlayed.playingChanged.coerceAtLeast(0L)
+                }
+            }
 
             val currentMedia = mediaItems.getOrNull(lastIndex)
             val durationSec = currentMedia?.mediaMetadata?.extras?.getInt("duration") ?: 0
@@ -574,7 +579,7 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
                     cancelPendingErrorRecovery()
                 }
                 if (!isPlaying) {
-                    MediaManager.setPlayingPausedTimestamp(
+                    MediaManager.setResumePoint(
                         player.currentMediaItem,
                         player.currentPosition
                     )
@@ -865,11 +870,17 @@ open class BaseMediaService : MediaLibraryService(), MediaManager.QueueTarget {
 
     private fun initializeMediaLibrarySession(player: Player) {
         Log.d(TAG, "initializeMediaLibrarySession")
+        val sessionIntent = Intent(this, MainActivity::class.java).apply {
+            action = Constants.ACTION_OPEN_NOW_PLAYING
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val sessionActivityPendingIntent =
-            TaskStackBuilder.create(this).run {
-                addNextIntent(Intent(baseContext, MainActivity::class.java))
-                getPendingIntent(0, FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT)
-            }
+            PendingIntent.getActivity(
+                this,
+                0,
+                sessionIntent,
+                FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT
+            )
 
         bitmapLoader = SyncBitmapLoader(applicationContext)
 

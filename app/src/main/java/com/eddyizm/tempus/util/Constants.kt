@@ -12,6 +12,7 @@ object Constants {
     const val GENRE_OBJECT = "GENRE_OBJECT"
     const val PLAYLIST_OBJECT = "PLAYLIST_OBJECT"
     const val PLAYLIST_ID = "PLAYLIST_ID"
+    const val PLAYLIST_NAME = "PLAYLIST_NAME"
     const val PODCAST_OBJECT = "PODCAST_OBJECT"
     const val PODCAST_CHANNEL_OBJECT = "PODCAST_CHANNEL_OBJECT"
     const val INTERNET_RADIO_STATION_OBJECT = "INTERNET_RADIO_STATION_OBJECT"
@@ -89,6 +90,7 @@ object Constants {
 
     const val DOWNLOAD_URI = "rest/download"
     const val ACTION_PLAY_EXTERNAL_DOWNLOAD = "com.eddyizm.tempus.action.PLAY_EXTERNAL_DOWNLOAD"
+    const val ACTION_OPEN_NOW_PLAYING = "com.eddyizm.tempus.action.OPEN_NOW_PLAYING"
     const val EXTRA_DOWNLOAD_URI = "EXTRA_DOWNLOAD_URI"
     const val EXTRA_DOWNLOAD_MEDIA_ID = "EXTRA_DOWNLOAD_MEDIA_ID"
     const val EXTRA_DOWNLOAD_TITLE = "EXTRA_DOWNLOAD_TITLE"

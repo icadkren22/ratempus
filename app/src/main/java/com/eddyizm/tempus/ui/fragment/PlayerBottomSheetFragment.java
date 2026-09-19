@@ -65,10 +65,17 @@ public class PlayerBottomSheetFragment extends Fragment {
 
         playerBottomSheetViewModel = new ViewModelProvider(requireActivity()).get(PlayerBottomSheetViewModel.class);
 
-        customizeBottomSheetBackground();
         customizeBottomSheetAction();
         initViewPager();
         setHeaderBookmarksButton();
+
+        if (getActivity() instanceof MainActivity) {
+            MainActivity activity = (MainActivity) getActivity();
+            if (activity.isBottomSheetExpanded()) {
+                bind.playerHeaderLayout.getRoot().setAlpha(0f);
+                bind.playerHeaderLayout.getRoot().setVisibility(View.GONE);
+            }
+        }
 
         return view;
     }
@@ -301,15 +308,17 @@ public class PlayerBottomSheetFragment extends Fragment {
     }
 
     public View getPlayerHeader() {
-        return requireView().findViewById(R.id.player_header_layout);
+        return bind != null ? bind.playerHeaderLayout.getRoot() : null;
     }
 
     public void goBackToFirstPage() {
+        if (getContext() == null || !isAdded() || getView() == null) return;
         bind.playerBodyLayout.playerBodyBottomSheetViewPager.setCurrentItem(0, false);
         goToControllerPage();
     }
 
     public void goToControllerPage() {
+        if (getContext() == null || !isAdded() || getView() == null) return;
         PlayerControllerVerticalPager playerControllerVerticalPager = (PlayerControllerVerticalPager) bind.playerBodyLayout.playerBodyBottomSheetViewPager.getAdapter();
         if (playerControllerVerticalPager != null) {
             PlayerControllerFragment playerControllerFragment = (PlayerControllerFragment) playerControllerVerticalPager.getRegisteredFragment(0);
@@ -320,6 +329,7 @@ public class PlayerBottomSheetFragment extends Fragment {
     }
 
     public void goToLyricsPage() {
+        if (getContext() == null || !isAdded() || getView() == null) return;
         PlayerControllerVerticalPager playerControllerVerticalPager = (PlayerControllerVerticalPager) bind.playerBodyLayout.playerBodyBottomSheetViewPager.getAdapter();
         if (playerControllerVerticalPager != null) {
             PlayerControllerFragment playerControllerFragment = (PlayerControllerFragment) playerControllerVerticalPager.getRegisteredFragment(0);
@@ -330,6 +340,7 @@ public class PlayerBottomSheetFragment extends Fragment {
     }
 
     public void goToQueuePage() {
+        if (getContext() == null || !isAdded() || getView() == null) return;
         bind.playerBodyLayout.playerBodyBottomSheetViewPager.setCurrentItem(1, true);
     }
 

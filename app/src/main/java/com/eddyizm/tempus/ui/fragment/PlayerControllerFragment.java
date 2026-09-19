@@ -69,6 +69,7 @@ import com.eddyizm.tempus.util.MusicUtil;
 import com.eddyizm.tempus.util.Preferences;
 import com.eddyizm.tempus.viewmodel.PlayerBottomSheetViewModel;
 import com.eddyizm.tempus.viewmodel.RatingViewModel;
+import com.eddyizm.tempus.util.FavoriteRegistry;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.elevation.SurfaceColors;
@@ -213,7 +214,6 @@ public class PlayerControllerFragment extends Fragment {
 
     private void initQuickActionView() {
         playerQuickActionView.setVisibility(Preferences.getQuickActionVisible() ? View.VISIBLE : View.GONE);
-        playerQuickActionView.setBackgroundColor(SurfaceColors.getColorForElevation(requireContext(), 8));
 
         playerOpenQueueButton.setOnClickListener(view -> {
             PlayerBottomSheetFragment playerBottomSheetFragment = (PlayerBottomSheetFragment) requireActivity()
@@ -228,9 +228,7 @@ public class PlayerControllerFragment extends Fragment {
                 playerMediaCoverViewPager.setCurrentItem(1, true);
             } else if (currentItem == 1) {
                 playerMediaCoverViewPager.setCurrentItem(0, true);
-                ;
             }
-
         });
     }
 
@@ -807,6 +805,7 @@ public class PlayerControllerFragment extends Fragment {
     private void initCoverLyricsSlideView() {
         playerMediaCoverViewPager.setOrientation(ViewPager2.ORIENTATION_HORIZONTAL);
         playerMediaCoverViewPager.setAdapter(new PlayerControllerHorizontalPager(this));
+        playerMediaCoverViewPager.setUserInputEnabled(false);
 
         playerMediaCoverViewPager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override
@@ -818,26 +817,40 @@ public class PlayerControllerFragment extends Fragment {
 
                 if (position == 0) {
                     activity.setBottomSheetDraggableState(true);
+                    playerMediaCoverViewPager.setUserInputEnabled(false);
 
                     if (playerBottomSheetFragment != null) {
                         playerBottomSheetFragment.setPlayerControllerVerticalPagerDraggableState(true);
                     }
+                    updateLyricsButtonTint(false);
                 } else if (position == 1) {
-                    activity.setBottomSheetDraggableState(false);
+                    activity.setBottomSheetDraggableState(true);
+                    playerMediaCoverViewPager.setUserInputEnabled(true);
 
                     if (playerBottomSheetFragment != null) {
                         playerBottomSheetFragment.setPlayerControllerVerticalPagerDraggableState(false);
                     }
+                    updateLyricsButtonTint(true);
                 }
             }
         });
+    }
+
+    private void updateLyricsButtonTint(boolean isLyricsActive) {
+        if (playerOpenLyricsButton == null)
+            return;
+        int colorAttr = isLyricsActive
+                ? com.google.android.material.R.attr.colorPrimary
+                : com.google.android.material.R.attr.colorOnSurface;
+        int color = com.google.android.material.color.MaterialColors.getColor(playerOpenLyricsButton, colorAttr);
+        ImageViewCompat.setImageTintList(playerOpenLyricsButton, ColorStateList.valueOf(color));
     }
 
     private void initMediaListenable() {
         playerBottomSheetViewModel.getLiveMedia().observe(getViewLifecycleOwner(), media -> {
             if (media != null) {
                 ratingViewModel.setSong(media);
-                buttonFavorite.setChecked(media.getStarred() != null);
+                buttonFavorite.setChecked(FavoriteRegistry.resolve(FavoriteRegistry.Kind.SONG, media.getId(), media.getStarred() != null));
                 buttonFavorite.setOnClickListener(v -> playerBottomSheetViewModel.setFavorite(requireContext(), media));
                 buttonFavorite.setOnLongClickListener(v -> {
                     Bundle bundle = new Bundle();

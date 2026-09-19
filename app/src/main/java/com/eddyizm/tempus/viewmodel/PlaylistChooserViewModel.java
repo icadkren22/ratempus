@@ -4,10 +4,12 @@ import android.app.Application;
 import android.app.Dialog;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.OptIn;
 import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
+import androidx.media3.common.util.UnstableApi;
 
 import com.eddyizm.tempus.repository.PlaylistRepository;
 import com.eddyizm.tempus.subsonic.models.Child;
@@ -20,8 +22,9 @@ import java.util.List;
 
 public class PlaylistChooserViewModel extends AndroidViewModel {
     private final PlaylistRepository playlistRepository;
-    private final MutableLiveData<List<Playlist>> playlists = new MutableLiveData<>(null);
-    private final MutableLiveData<Boolean> playlistIsPublic = new MutableLiveData<>(false);
+    // Null until the user touches the switch. A false default went out on the wire and changed
+    // the visibility of a playlist the user only meant to add a song to.
+    private final MutableLiveData<Boolean> playlistIsPublic = new MutableLiveData<>(null);
 
     public Boolean getIsPlaylistPublic() {
         return playlistIsPublic.getValue();
@@ -29,6 +32,15 @@ public class PlaylistChooserViewModel extends AndroidViewModel {
 
     public void setIsPlaylistPublic(boolean isPublic) {
         playlistIsPublic.setValue(isPublic);
+    }
+
+    /**
+     * Clears the visibility the user picked last time. This view model belongs to the activity, so
+     * it outlives the dialog, while the switch is inflated unchecked every time. Without this the
+     * two disagree and a later add sends a visibility the switch is not showing.
+     */
+    public void forgetVisibility() {
+        playlistIsPublic.setValue(null);
     }
 
     private ArrayList<Child> toAdd = new ArrayList<>();
@@ -39,11 +51,14 @@ public class PlaylistChooserViewModel extends AndroidViewModel {
         playlistRepository = new PlaylistRepository();
     }
 
-    public LiveData<List<Playlist>> getPlaylistList(LifecycleOwner owner) {
-        playlistRepository.getPlaylists(false, -1).observe(owner, playlists::postValue);
-        return playlists;
+    @OptIn(markerClass = UnstableApi.class)
+    public LiveData<List<Playlist>> getPlaylistList() {
+        playlistRepository.refreshAllPlaylists();
+        String sortOrder = Preferences.getHomeSortPlaylists();
+        return playlistRepository.getSortedPlaylists(sortOrder);
     }
 
+    @OptIn(markerClass = UnstableApi.class)
     public void addSongsToPlaylist(LifecycleOwner owner, Dialog dialog, String playlistId) {
         List<String> songIds = Lists.transform(toAdd, Child::getId);
         if (Preferences.allowPlaylistDuplicates()) {

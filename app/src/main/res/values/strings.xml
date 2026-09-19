@@ -328,7 +328,7 @@
     <string name="playlist_chooser_dialog_visibility_public">Public</string>
     <string name="playlist_chooser_dialog_visibility_private">Private</string>
     <string name="playlist_chooser_dialog_visibility_switch_label">Mark the playlist as public</string>
-    <string name="playlist_chooser_dialog_visibility_summary">The server updates the visibility on each request. By default it is set to private.</string>
+    <string name="playlist_chooser_dialog_visibility_summary_v2">Turning this on marks the playlist public. Leaving it alone does not change the playlist visibility.</string>
     <string name="playlist_counted_tracks">%1$d tracks •  %2$s</string>
     <string name="playlist_duration">Duration  •  %1$s</string>
     <string name="playlist_editor_dialog_action_delete_toast">Long press to delete</string>
@@ -341,6 +341,14 @@
     <string name="playlist_editor_dialog_action_delete_failure">Failed to delete playlist</string>
     <string name="playlist_editor_dialog_action_save_success">Playlist saved</string>
     <string name="playlist_editor_dialog_action_save_failure">Failed to save playlist</string>
+    <string name="playlist_editor_dialog_action_save_empty">A playlist has to keep at least one track</string>
+    <string name="playlist_editor_hint">Drag the handle to reorder, tap the trash to remove. Nothing is sent until Save.</string>
+    <string name="playlist_editor_remove_track">Remove track</string>
+    <string name="playlist_editor_drag_track">Drag to reorder</string>
+    <string name="menu_edit_playlist_details_button">Edit details</string>
+    <string name="playlist_details_dialog_title">Playlist details</string>
+    <string name="playlist_editor_load_failure">Could not load the playlist</string>
+    <string name="playlist_editor_removed_track">Removed from the list</string>
     <string name="playlist_page_empty">No songs in this playlist</string>
     <string name="playlist_page_play_button">Play</string>
     <string name="playlist_page_shuffle_button">Shuffle</string>
@@ -405,6 +413,8 @@
     <string name="search_title_album">Albums</string>
     <string name="search_title_artist">Artists</string>
     <string name="search_title_song">Songs</string>
+    <string name="search_title_empty_response">No results.</string>
+    <string name="search_description_empty_response">We checked your server response but it was empty.</string>
     <string name="server_signup_dialog_action_low_security">Low security</string>
     <string name="server_signup_dialog_action_delete_toast">Long press to delete</string>
     <string name="server_signup_dialog_hint_local_address">Local URL</string>
@@ -648,6 +658,8 @@
     <string name="song_bottom_sheet_rate">Rate</string>
     <string name="song_bottom_sheet_remove">Remove from device</string>
     <string name="song_bottom_sheet_remove_from_playlist">Remove from playlist</string>
+    <string name="song_bottom_sheet_undo">Undo</string>
+    <string name="song_bottom_sheet_undo_failure">Failed to put the song back</string>
     <string name="song_bottom_sheet_share">Share</string>
     <string name="song_list_page_downloaded">Downloaded</string>
     <string name="song_list_page_most_played">Most played tracks</string>
@@ -866,10 +878,11 @@
     <string name="la_theme_card_default">Default</string>
     <string name="la_theme_card_flirt_red_description">Flirt red accent color</string>
     <string name="la_theme_card_coral_red_description">Coral red accent color</string>
-    <string name="la_theme_card_royal_blue_description">Emerald green accent color</string>
+    <string name="la_theme_card_emerald_green_description">Emerald green accent color</string>
+    <string name="la_theme_card_royal_blue_description">Royal blue accent color</string>
     <string name="la_theme_card_purple_violet_description">Purple violet accent color</string>
     <string name="la_theme_card_sunset_amber_description">Sunset amber accent color</string>
-    <string name="la_theme_card_teal_description">Teal amber accent color</string>
+    <string name="la_theme_card_teal_description">Teal accent color</string>
     <string name="la_theme_card_slate_gray_description">Slate gray accent color</string>
     <string name="la_theme_dialog_color_picker_title">Pick and accent color</string>
 
