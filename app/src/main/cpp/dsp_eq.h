@@ -37,6 +37,7 @@ class DspEqualizer {
 public:
     static constexpr int NUM_BANDS = 5;
     static constexpr int BAND_FREQS[NUM_BANDS] = {60, 230, 910, 3600, 14000};
+    static constexpr double BAND_WEIGHTS[NUM_BANDS] = {0.25, 0.35, 0.65, 0.60, 0.30};
     static constexpr double DEFAULT_Q = 1.414;
 
     std::atomic<bool> enabled{false};
@@ -46,6 +47,8 @@ private:
     int band_levels[NUM_BANDS] = {0, 0, 0, 0, 0};
     Biquad filters[NUM_BANDS];
     uint32_t sample_rate = 44100;
+    // Auto pre-amp: frequency-weighted progressive soft-curve to prevent clipping while keeping output loud
+    double preamp_gain = 1.0;
     std::mutex mtx;
 
 public:
@@ -85,15 +88,28 @@ public:
         }
     }
 
+    /**
+     * Soft-knee analog-style saturation cushion.
+     * For |x| <= 0.7: perfectly linear and transparent (100% untouched).
+     * For |x| > 0.7: smoothly curves towards 1.0 using tanh, eliminating harsh digital red-line clipping.
+     */
+    static inline double soft_knee(double x) {
+        double abs_x = std::abs(x);
+        if (abs_x <= 0.7) return x;
+        double excess = abs_x - 0.7;
+        double compressed = 0.7 + 0.3 * std::tanh(excess / 0.3);
+        return (x > 0.0) ? compressed : -compressed;
+    }
+
     inline double process_sample(int ch, double in) {
         if (!enabled.load(std::memory_order_relaxed) || is_flat.load(std::memory_order_relaxed)) {
             return in;
         }
-        double s = in;
+        double s = in * preamp_gain;
         for (int i = 0; i < NUM_BANDS; i++) {
             s = filters[i].process(ch, s);
         }
-        return s;
+        return soft_knee(s);
     }
 
 private:
@@ -101,6 +117,8 @@ private:
         bool all_flat = true;
         double sr = (sample_rate > 0) ? static_cast<double>(sample_rate) : 44100.0;
         bool en = enabled.load(std::memory_order_relaxed);
+        // Frequency-weighted progressive soft-curve auto pre-amp with multi-band stacking:
+        double total_weighted_boost_db = 0.0;
 
         for (int i = 0; i < NUM_BANDS; i++) {
             double gain_db = static_cast<double>(band_levels[i]) / 100.0;
@@ -133,9 +151,20 @@ private:
                 filters[i].b2 = b2 / a0;
                 filters[i].a1 = a1 / a0;
                 filters[i].a2 = a2 / a0;
+
+                if (gain_db > 0.0) {
+                    total_weighted_boost_db += gain_db * BAND_WEIGHTS[i];
+                }
             }
         }
         is_flat.store(all_flat, std::memory_order_relaxed);
+        // Frequency-weighted progressive soft-curve auto pre-amp:
+        if (en && total_weighted_boost_db > 0.0) {
+            double attenuation_db = 8.0 * (1.0 - std::exp(-total_weighted_boost_db / 8.0));
+            preamp_gain = std::pow(10.0, -attenuation_db / 20.0);
+        } else {
+            preamp_gain = 1.0;
+        }
     }
 };
 

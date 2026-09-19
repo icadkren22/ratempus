@@ -8,21 +8,17 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import com.eddyizm.tempus.util.Preferences
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.pow
-import kotlin.math.sin
 
 private const val TAG = "EqualizerAudioProcessor"
 
 /**
- * High-performance standalone 5-band software DSP equalizer implemented as a Media3 [AudioProcessor].
- * Operates directly on PCM samples (both 16-bit integer and 32-bit float) using Direct Form II
- * Transposed Biquad Peaking IIR filters.
+ * High-performance 5-band DSP Equalizer [AudioProcessor] for ExoPlayer's standard AudioTrack pipeline.
  *
- * Runs inside ExoPlayer's AudioSink pipeline before audio is dispatched to Vanilla (AudioTrack),
- * Direct HD (libdirectaudio.so), or USB Exclusive (Userspace UAC2).
+ * Fully unified with Tempus's native C++ DSP engine (dsp_eq.h):
+ * - Direct Form II Transposed Biquad Peaking IIR filters
+ * - Frequency-weighted progressive soft-curve auto pre-amp
+ * - Analog-style soft-knee saturation cushion (tanh)
+ * - Accelerated with ARM NEON SIMD instructions
  */
 @OptIn(markerClass = [UnstableApi::class])
 class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
@@ -30,9 +26,47 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
     companion object {
         val BAND_FREQUENCIES_HZ = intArrayOf(60, 230, 910, 3600, 14000)
         const val NUM_BANDS = 5
-        private const val DEFAULT_Q = 1.414 // sqrt(2), optimal octave bandwidth
         private const val MIN_LEVEL_MB = -1500 // -15.0 dB in millibels
         private const val MAX_LEVEL_MB = 1500  // +15.0 dB in millibels
+
+        private var isNativeLoaded = false
+
+        init {
+            try {
+                System.loadLibrary("directaudio")
+                isNativeLoaded = true
+                Log.i(TAG, "libdirectaudio.so loaded successfully for EqualizerAudioProcessor (unified dsp_eq.h)")
+            } catch (t: Throwable) {
+                isNativeLoaded = false
+                Log.w(TAG, "libdirectaudio.so not available: ${t.message}")
+            }
+        }
+
+        @JvmStatic
+        private external fun nativeConfigure(sampleRate: Int)
+
+        @JvmStatic
+        private external fun nativeSetEnabled(enabled: Boolean)
+
+        @JvmStatic
+        private external fun nativeSetBand(band: Int, levelMb: Int)
+
+        @JvmStatic
+        private external fun nativeReset()
+
+        @JvmStatic
+        private external fun nativeProcessFloat(
+            inBuf: ByteBuffer, inOffset: Int,
+            outBuf: ByteBuffer, outOffset: Int,
+            numSamples: Int, channelCount: Int
+        )
+
+        @JvmStatic
+        private external fun nativeProcessInt16(
+            inBuf: ByteBuffer, inOffset: Int,
+            outBuf: ByteBuffer, outOffset: Int,
+            numSamples: Int, channelCount: Int
+        )
 
         @Volatile
         private var instance: EqualizerAudioProcessor? = null
@@ -54,38 +88,15 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
     var isEnabled: Boolean = false
         set(value) {
             field = value
-            updateCoefficients()
+            if (isNativeLoaded) {
+                try { nativeSetEnabled(value) } catch (_: Throwable) {}
+            }
         }
 
-    private class BiquadCoeffs {
-        var b0: Double = 1.0
-        var b1: Double = 0.0
-        var b2: Double = 0.0
-        var a1: Double = 0.0
-        var a2: Double = 0.0
-        var isBypassed: Boolean = true
-    }
-
-    private class ChannelState(numBands: Int) {
-        val d1 = DoubleArray(numBands)
-        val d2 = DoubleArray(numBands)
-
-        fun reset() {
-            d1.fill(0.0)
-            d2.fill(0.0)
-        }
-    }
-
-    private val filterCoeffs = Array(NUM_BANDS) { BiquadCoeffs() }
-    private var channelStates: Array<ChannelState> = Array(2) { ChannelState(NUM_BANDS) }
     private var currentSampleRate: Int = 44100
     private var currentChannelCount: Int = 2
     private var isFlat: Boolean = true
     private var isConfigured: Boolean = false
-
-    init {
-        updateCoefficients()
-    }
 
     fun getCenterFreq(band: Int): Int {
         if (band in 0 until NUM_BANDS) {
@@ -106,55 +117,11 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
             val clamped = levelMb.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB)
             if (bandLevels[band] != clamped) {
                 bandLevels[band] = clamped
-                updateCoefficients()
-            }
-        }
-    }
-
-    private fun updateCoefficients() {
-        synchronized(filterCoeffs) {
-            var allBypassed = true
-            val sampleRate = if (currentSampleRate > 0) currentSampleRate.toDouble() else 44100.0
-
-            for (i in 0 until NUM_BANDS) {
-                val gainDb = bandLevels[i] / 100.0 // convert millibels to dB
-                val coeffs = filterCoeffs[i]
-
-                if (!isEnabled || abs(gainDb) < 0.05) {
-                    coeffs.b0 = 1.0
-                    coeffs.b1 = 0.0
-                    coeffs.b2 = 0.0
-                    coeffs.a1 = 0.0
-                    coeffs.a2 = 0.0
-                    coeffs.isBypassed = true
-                } else {
-                    allBypassed = false
-                    coeffs.isBypassed = false
-
-                    // Peaking EQ filter design (Robert Bristow-Johnson Audio EQ Cookbook)
-                    val freq = BAND_FREQUENCIES_HZ[i].toDouble().coerceAtMost(sampleRate * 0.49)
-                    val a = 10.0.pow(gainDb / 40.0)
-                    val omega = 2.0 * Math.PI * freq / sampleRate
-                    val sinOmega = sin(omega)
-                    val cosOmega = cos(omega)
-                    val alpha = sinOmega / (2.0 * DEFAULT_Q)
-
-                    val b0 = 1.0 + alpha * a
-                    val b1 = -2.0 * cosOmega
-                    val b2 = 1.0 - alpha * a
-                    val a0 = 1.0 + alpha / a
-                    val a1 = -2.0 * cosOmega
-                    val a2 = 1.0 - alpha / a
-
-                    coeffs.b0 = b0 / a0
-                    coeffs.b1 = b1 / a0
-                    coeffs.b2 = b2 / a0
-                    coeffs.a1 = a1 / a0
-                    coeffs.a2 = a2 / a0
+                isFlat = bandLevels.all { it == 0 }
+                if (isNativeLoaded) {
+                    try { nativeSetBand(band, clamped) } catch (_: Throwable) {}
                 }
             }
-            isFlat = allBypassed
-            Log.d(TAG, "updateCoefficients: isEnabled=$isEnabled isFlat=$isFlat bands=${bandLevels.joinToString()}")
         }
     }
 
@@ -173,25 +140,32 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         currentSampleRate = inputAudioFormat.sampleRate
         currentChannelCount = inputAudioFormat.channelCount
 
-        channelStates = Array(currentChannelCount) { ChannelState(NUM_BANDS) }
-        updateCoefficients()
+        if (isNativeLoaded) {
+            try {
+                nativeConfigure(currentSampleRate)
+                nativeSetEnabled(isEnabled)
+                for (b in 0 until NUM_BANDS) {
+                    nativeSetBand(b, bandLevels[b])
+                }
+            } catch (_: Throwable) {}
+        }
         isConfigured = true
 
-        Log.i(TAG, "Configured EqualizerAudioProcessor: sr=$currentSampleRate ch=$currentChannelCount enc=$encoding")
+        Log.i(TAG, "Configured EqualizerAudioProcessor: sr=$currentSampleRate ch=$currentChannelCount enc=$encoding native=$isNativeLoaded")
         return inputAudioFormat
     }
 
     override fun onFlush() {
         super.onFlush()
-        for (state in channelStates) {
-            state.reset()
+        if (isNativeLoaded) {
+            try { nativeReset() } catch (_: Throwable) {}
         }
     }
 
     override fun onReset() {
         super.onReset()
-        for (state in channelStates) {
-            state.reset()
+        if (isNativeLoaded) {
+            try { nativeReset() } catch (_: Throwable) {}
         }
         isConfigured = false
     }
@@ -200,9 +174,8 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        val isDirectHdOrUsbEx = Preferences.isDirectHdEnabled() || Preferences.isUsbDacExclusiveEnabled()
-        if (!isEnabled || isFlat || isDirectHdOrUsbEx) {
-            // Fast direct pass-through (Vanilla AudioTrack uses Kotlin DSP; Direct HD & USB Exclusive use native C++ DSP)
+        if (!isEnabled || isFlat) {
+            // Fast direct pass-through when disabled or all bands are flat
             val outputBuffer = replaceOutputBuffer(remaining)
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()
@@ -215,49 +188,29 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         outputBuffer.order(ByteOrder.nativeOrder())
         inputBuffer.order(ByteOrder.nativeOrder())
 
-        synchronized(filterCoeffs) {
+        // Fast native DSP path using unified dsp_eq.h engine (SIMD NEON accelerated)
+        if (isNativeLoaded && inputBuffer.isDirect && outputBuffer.isDirect) {
+            val inPos = inputBuffer.position()
+            val outPos = outputBuffer.position()
             if (encoding == C.ENCODING_PCM_FLOAT) {
-                var ch = 0
-                while (inputBuffer.remaining() >= 4) {
-                    var sample = inputBuffer.getFloat().toDouble()
-                    val chState = channelStates.getOrNull(ch)
-                    if (chState != null) {
-                        for (b in 0 until NUM_BANDS) {
-                            val coeff = filterCoeffs[b]
-                            if (!coeff.isBypassed) {
-                                val y = coeff.b0 * sample + chState.d1[b]
-                                chState.d1[b] = coeff.b1 * sample - coeff.a1 * y + chState.d2[b]
-                                chState.d2[b] = coeff.b2 * sample - coeff.a2 * y
-                                sample = y
-                            }
-                        }
-                    }
-                    val clamped = sample.coerceIn(-1.0, 1.0).toFloat()
-                    outputBuffer.putFloat(clamped)
-                    ch = (ch + 1) % channelCount
-                }
-            } else {
-                var ch = 0
-                while (inputBuffer.remaining() >= 2) {
-                    var sample = inputBuffer.getShort().toDouble() / 32768.0
-                    val chState = channelStates.getOrNull(ch)
-                    if (chState != null) {
-                        for (b in 0 until NUM_BANDS) {
-                            val coeff = filterCoeffs[b]
-                            if (!coeff.isBypassed) {
-                                val y = coeff.b0 * sample + chState.d1[b]
-                                chState.d1[b] = coeff.b1 * sample - coeff.a1 * y + chState.d2[b]
-                                chState.d2[b] = coeff.b2 * sample - coeff.a2 * y
-                                sample = y
-                            }
-                        }
-                    }
-                    val clamped = (sample * 32768.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
-                    outputBuffer.putShort(clamped)
-                    ch = (ch + 1) % channelCount
-                }
+                val numSamples = remaining / 4
+                nativeProcessFloat(inputBuffer, inPos, outputBuffer, outPos, numSamples, channelCount)
+                inputBuffer.position(inPos + remaining)
+                outputBuffer.position(outPos + remaining)
+                outputBuffer.flip()
+                return
+            } else if (encoding == C.ENCODING_PCM_16BIT) {
+                val numSamples = remaining / 2
+                nativeProcessInt16(inputBuffer, inPos, outputBuffer, outPos, numSamples, channelCount)
+                inputBuffer.position(inPos + remaining)
+                outputBuffer.position(outPos + remaining)
+                outputBuffer.flip()
+                return
             }
         }
+
+        // Fallback pass-through (should not be reached with Media3's direct buffers)
+        outputBuffer.put(inputBuffer)
         outputBuffer.flip()
     }
 }
