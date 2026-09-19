@@ -93,6 +93,21 @@ class NativeDirectAudioTrack(
         @JvmStatic
         external fun nativeSetEqBand(handle: Long, band: Int, levelMb: Int)
 
+        @JvmStatic
+        external fun nativeSetEqBandWeight(handle: Long, band: Int, weight: Double)
+
+        @JvmStatic
+        external fun nativeSetEqMaxAttenuation(handle: Long, attenDb: Double)
+
+        @JvmStatic
+        external fun nativeSetEqSoftKneeThreshold(handle: Long, threshold: Double)
+
+        @JvmStatic
+        external fun nativeSetEqPreampMode(handle: Long, manual: Boolean)
+
+        @JvmStatic
+        external fun nativeSetEqManualPreamp(handle: Long, db: Double)
+
         @Volatile
         private var activeTrack: NativeDirectAudioTrack? = null
 
@@ -108,6 +123,31 @@ class NativeDirectAudioTrack(
         fun setNativeEqBand(band: Int, levelMb: Int) {
             activeTrack?.let { if (it.isValid) nativeSetEqBand(it.nativeHandle, band, levelMb) }
         }
+
+        @JvmStatic
+        fun setNativeEqBandWeight(band: Int, weight: Double) {
+            activeTrack?.let { if (it.isValid) nativeSetEqBandWeight(it.nativeHandle, band, weight) }
+        }
+
+        @JvmStatic
+        fun setNativeEqMaxAttenuation(attenDb: Double) {
+            activeTrack?.let { if (it.isValid) nativeSetEqMaxAttenuation(it.nativeHandle, attenDb) }
+        }
+
+        @JvmStatic
+        fun setNativeEqSoftKneeThreshold(threshold: Double) {
+            activeTrack?.let { if (it.isValid) nativeSetEqSoftKneeThreshold(it.nativeHandle, threshold) }
+        }
+
+        @JvmStatic
+        fun setNativeEqPreampMode(manual: Boolean) {
+            activeTrack?.let { if (it.isValid) nativeSetEqPreampMode(it.nativeHandle, manual) }
+        }
+
+        @JvmStatic
+        fun setNativeEqManualPreamp(db: Double) {
+            activeTrack?.let { if (it.isValid) nativeSetEqManualPreamp(it.nativeHandle, db) }
+        }
     }
 
     private var nativeHandle: Long = 0L
@@ -120,9 +160,15 @@ class NativeDirectAudioTrack(
                 val enabled = Preferences.isEqualizerEnabled()
                 nativeSetEqEnabled(nativeHandle, enabled)
                 val savedLevels = Preferences.getEqualizerBandLevels(5)
+                val savedWeights = Preferences.getEqualizerBandWeights(5)
                 for (i in 0 until 5) {
                     nativeSetEqBand(nativeHandle, i, savedLevels[i].toInt())
+                    nativeSetEqBandWeight(nativeHandle, i, savedWeights[i].toDouble())
                 }
+                nativeSetEqMaxAttenuation(nativeHandle, Preferences.getEqualizerMaxAttenuation().toDouble())
+                nativeSetEqSoftKneeThreshold(nativeHandle, Preferences.getEqualizerSoftKneeThreshold().toDouble())
+                nativeSetEqPreampMode(nativeHandle, Preferences.isEqualizerManualPreampMode())
+                nativeSetEqManualPreamp(nativeHandle, Preferences.getEqualizerManualPreampDb().toDouble())
             }
         }
     }

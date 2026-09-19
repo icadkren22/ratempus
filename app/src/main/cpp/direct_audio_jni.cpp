@@ -604,6 +604,41 @@ Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqBand(
     if (ctx) ctx->eq.set_band_level(band, level_mb);
 }
 
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqBandWeight(
+        JNIEnv*, jclass, jlong h, jint band, jdouble weight) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_band_weight(band, weight);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqMaxAttenuation(
+        JNIEnv*, jclass, jlong h, jdouble atten_db) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_max_attenuation(atten_db);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqSoftKneeThreshold(
+        JNIEnv*, jclass, jlong h, jdouble threshold) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_soft_knee_threshold(threshold);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqPreampMode(
+        JNIEnv*, jclass, jlong h, jboolean manual) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_manual_preamp_mode(manual == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_NativeDirectAudioTrack_nativeSetEqManualPreamp(
+        JNIEnv*, jclass, jlong h, jdouble db) {
+    auto* ctx = reinterpret_cast<DirectAudioContext*>(h);
+    if (ctx) ctx->eq.set_manual_preamp_db(db);
+}
+
 // ---------------------------------------------------------------------------
 // Standalone DSP Equalizer instance for EqualizerAudioProcessor (AudioTrack)
 // ---------------------------------------------------------------------------
@@ -625,6 +660,36 @@ JNIEXPORT void JNICALL
 Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetBand(
         JNIEnv*, jclass, jint band, jint level_mb) {
     g_audio_processor_eq.set_band_level(band, level_mb);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetBandWeight(
+        JNIEnv*, jclass, jint band, jdouble weight) {
+    g_audio_processor_eq.set_band_weight(band, weight);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetMaxAttenuation(
+        JNIEnv*, jclass, jdouble atten_db) {
+    g_audio_processor_eq.set_max_attenuation(atten_db);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetSoftKneeThreshold(
+        JNIEnv*, jclass, jdouble threshold) {
+    g_audio_processor_eq.set_soft_knee_threshold(threshold);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetPreampMode(
+        JNIEnv*, jclass, jboolean manual) {
+    g_audio_processor_eq.set_manual_preamp_mode(manual == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_equalizer_EqualizerAudioProcessor_nativeSetManualPreamp(
+        JNIEnv*, jclass, jdouble db) {
+    g_audio_processor_eq.set_manual_preamp_db(db);
 }
 
 JNIEXPORT void JNICALL

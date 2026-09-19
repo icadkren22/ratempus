@@ -871,4 +871,39 @@ Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqBand(
     if (ctx) ctx->eq.set_band_level(band, level_mb);
 }
 
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqBandWeight(
+        JNIEnv*, jclass, jlong h, jint band, jdouble weight) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_band_weight(band, weight);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqMaxAttenuation(
+        JNIEnv*, jclass, jlong h, jdouble atten_db) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_max_attenuation(atten_db);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqSoftKneeThreshold(
+        JNIEnv*, jclass, jlong h, jdouble threshold) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_soft_knee_threshold(threshold);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqPreampMode(
+        JNIEnv*, jclass, jlong h, jboolean manual) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_manual_preamp_mode(manual == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_eddyizm_tempus_audio_usb_UsbExclusiveOutput_nativeSetEqManualPreamp(
+        JNIEnv*, jclass, jlong h, jdouble db) {
+    auto* ctx = reinterpret_cast<UsbAudioCtx*>(h);
+    if (ctx) ctx->eq.set_manual_preamp_db(db);
+}
+
 } // extern "C"

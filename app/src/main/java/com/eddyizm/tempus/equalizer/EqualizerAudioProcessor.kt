@@ -52,6 +52,21 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         private external fun nativeSetBand(band: Int, levelMb: Int)
 
         @JvmStatic
+        private external fun nativeSetBandWeight(band: Int, weight: Double)
+
+        @JvmStatic
+        private external fun nativeSetMaxAttenuation(attenDb: Double)
+
+        @JvmStatic
+        private external fun nativeSetSoftKneeThreshold(threshold: Double)
+
+        @JvmStatic
+        private external fun nativeSetPreampMode(manual: Boolean)
+
+        @JvmStatic
+        private external fun nativeSetManualPreamp(db: Double)
+
+        @JvmStatic
         private external fun nativeReset()
 
         @JvmStatic
@@ -83,6 +98,11 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
     val bandLevelRange: ShortArray get() = shortArrayOf(MIN_LEVEL_MB.toShort(), MAX_LEVEL_MB.toShort())
 
     private val bandLevels = IntArray(NUM_BANDS) // in millibels (-1500 to +1500)
+    private val bandWeights = doubleArrayOf(0.40, 0.60, 0.65, 0.60, 0.40)
+    private var maxAttenuationDb: Double = 8.0
+    private var softKneeThreshold: Double = 0.70
+    private var manualPreampMode: Boolean = false
+    private var manualPreampDb: Double = 0.0
 
     @Volatile
     var isEnabled: Boolean = false
@@ -112,16 +132,77 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         return 0
     }
 
+    private fun updateIsFlat() {
+        val bandsFlat = bandLevels.all { it == 0 }
+        val preampFlat = !manualPreampMode || kotlin.math.abs(manualPreampDb) < 0.05
+        isFlat = bandsFlat && preampFlat
+    }
+
     fun setBandLevel(band: Int, levelMb: Int) {
         if (band in 0 until NUM_BANDS) {
             val clamped = levelMb.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB)
             if (bandLevels[band] != clamped) {
                 bandLevels[band] = clamped
-                isFlat = bandLevels.all { it == 0 }
+                updateIsFlat()
                 if (isNativeLoaded) {
                     try { nativeSetBand(band, clamped) } catch (_: Throwable) {}
                 }
             }
+        }
+    }
+
+    fun getBandWeight(band: Int): Double {
+        return if (band in 0 until NUM_BANDS) bandWeights[band] else 0.0
+    }
+
+    fun setBandWeight(band: Int, weight: Double) {
+        if (band in 0 until NUM_BANDS) {
+            val clamped = weight.coerceIn(0.0, 1.0)
+            bandWeights[band] = clamped
+            if (isNativeLoaded) {
+                try { nativeSetBandWeight(band, clamped) } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    fun getMaxAttenuation(): Double = maxAttenuationDb
+
+    fun setMaxAttenuation(attenDb: Double) {
+        val clamped = attenDb.coerceIn(0.0, 24.0)
+        maxAttenuationDb = clamped
+        if (isNativeLoaded) {
+            try { nativeSetMaxAttenuation(clamped) } catch (_: Throwable) {}
+        }
+    }
+
+    fun getSoftKneeThreshold(): Double = softKneeThreshold
+
+    fun setSoftKneeThreshold(threshold: Double) {
+        val clamped = threshold.coerceIn(0.1, 1.0)
+        softKneeThreshold = clamped
+        if (isNativeLoaded) {
+            try { nativeSetSoftKneeThreshold(clamped) } catch (_: Throwable) {}
+        }
+    }
+
+    fun isManualPreampMode(): Boolean = manualPreampMode
+
+    fun setManualPreampMode(manual: Boolean) {
+        manualPreampMode = manual
+        updateIsFlat()
+        if (isNativeLoaded) {
+            try { nativeSetPreampMode(manual) } catch (_: Throwable) {}
+        }
+    }
+
+    fun getManualPreampDb(): Double = manualPreampDb
+
+    fun setManualPreampDb(db: Double) {
+        val clamped = db.coerceIn(-24.0, 24.0)
+        manualPreampDb = clamped
+        updateIsFlat()
+        if (isNativeLoaded) {
+            try { nativeSetManualPreamp(clamped) } catch (_: Throwable) {}
         }
     }
 
@@ -146,9 +227,15 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
                 nativeSetEnabled(isEnabled)
                 for (b in 0 until NUM_BANDS) {
                     nativeSetBand(b, bandLevels[b])
+                    nativeSetBandWeight(b, bandWeights[b])
                 }
+                nativeSetMaxAttenuation(maxAttenuationDb)
+                nativeSetSoftKneeThreshold(softKneeThreshold)
+                nativeSetPreampMode(manualPreampMode)
+                nativeSetManualPreamp(manualPreampDb)
             } catch (_: Throwable) {}
         }
+        updateIsFlat()
         isConfigured = true
 
         Log.i(TAG, "Configured EqualizerAudioProcessor: sr=$currentSampleRate ch=$currentChannelCount enc=$encoding native=$isNativeLoaded")

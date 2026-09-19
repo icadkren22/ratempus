@@ -727,6 +727,15 @@
     </plurals>
     <string name="equalizer_fragment_title">Equalizer</string>
     <string name="equalizer_reset">Reset</string>
+    <string name="equalizer_reset_all">Reset All to Defaults</string>
+    <string name="equalizer_dynamics_title">Dynamics &amp; Headroom</string>
+    <string name="equalizer_max_attenuation">Max Attenuation</string>
+    <string name="equalizer_soft_knee_threshold">Cushion Cut-off</string>
+    <string name="equalizer_weights_title">Auto Pre-Amp Band Weights</string>
+    <string name="equalizer_preamp_mode_title">Pre-Amp Mode</string>
+    <string name="equalizer_preamp_dynamic">Dynamic (Auto Headroom)</string>
+    <string name="equalizer_preamp_manual">Manual (-24 to +24 dB)</string>
+    <string name="equalizer_manual_preamp_title">Pre-Amp Gain</string>
     <string name="equalizer_enable">Enable</string>
     <string name="equalizer_managed_externally">Equalizer managed by system or third party app</string>
     <string name="settings_app_equalizer">Built-in equalizer</string>

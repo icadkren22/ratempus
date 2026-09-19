@@ -37,7 +37,9 @@ class DspEqualizer {
 public:
     static constexpr int NUM_BANDS = 5;
     static constexpr int BAND_FREQS[NUM_BANDS] = {60, 230, 910, 3600, 14000};
-    static constexpr double BAND_WEIGHTS[NUM_BANDS] = {0.25, 0.35, 0.65, 0.60, 0.30};
+    static constexpr double DEFAULT_BAND_WEIGHTS[NUM_BANDS] = {0.40, 0.60, 0.65, 0.60, 0.40};
+    static constexpr double DEFAULT_MAX_ATTENUATION_DB = 8.0;
+    static constexpr double DEFAULT_SOFT_KNEE_THRESHOLD = 0.7;
     static constexpr double DEFAULT_Q = 1.414;
 
     std::atomic<bool> enabled{false};
@@ -45,6 +47,11 @@ public:
 
 private:
     int band_levels[NUM_BANDS] = {0, 0, 0, 0, 0};
+    double band_weights[NUM_BANDS] = {0.40, 0.60, 0.65, 0.60, 0.40};
+    double max_attenuation_db = 8.0;
+    std::atomic<double> soft_knee_threshold{0.7};
+    std::atomic<bool> manual_preamp_mode{false};
+    double manual_preamp_db = 0.0;
     Biquad filters[NUM_BANDS];
     uint32_t sample_rate = 44100;
     // Auto pre-amp: frequency-weighted progressive soft-curve to prevent clipping while keeping output loud
@@ -81,6 +88,68 @@ public:
         }
     }
 
+    void set_band_weight(int band, double weight) {
+        if (band < 0 || band >= NUM_BANDS) return;
+        if (weight < 0.0) weight = 0.0;
+        if (weight > 1.0) weight = 1.0;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (band_weights[band] != weight) {
+            band_weights[band] = weight;
+            update_coefficients_locked();
+        }
+    }
+
+    double get_band_weight(int band) const {
+        if (band < 0 || band >= NUM_BANDS) return 0.0;
+        return band_weights[band];
+    }
+
+    void set_max_attenuation(double atten_db) {
+        if (atten_db < 0.0) atten_db = 0.0;
+        if (atten_db > 24.0) atten_db = 24.0;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (max_attenuation_db != atten_db) {
+            max_attenuation_db = atten_db;
+            update_coefficients_locked();
+        }
+    }
+
+    double get_max_attenuation() const {
+        return max_attenuation_db;
+    }
+
+    void set_soft_knee_threshold(double threshold) {
+        if (threshold < 0.1) threshold = 0.1;
+        if (threshold > 1.0) threshold = 1.0;
+        soft_knee_threshold.store(threshold, std::memory_order_relaxed);
+    }
+
+    double get_soft_knee_threshold() const {
+        return soft_knee_threshold.load(std::memory_order_relaxed);
+    }
+
+    void set_manual_preamp_mode(bool manual) {
+        manual_preamp_mode.store(manual, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mtx);
+        update_coefficients_locked();
+    }
+
+    bool get_manual_preamp_mode() const {
+        return manual_preamp_mode.load(std::memory_order_relaxed);
+    }
+
+    void set_manual_preamp_db(double db) {
+        if (db < -24.0) db = -24.0;
+        if (db > 24.0) db = 24.0;
+        std::lock_guard<std::mutex> lock(mtx);
+        manual_preamp_db = db;
+        update_coefficients_locked();
+    }
+
+    double get_manual_preamp_db() const {
+        return manual_preamp_db;
+    }
+
     void reset() {
         std::lock_guard<std::mutex> lock(mtx);
         for (int i = 0; i < NUM_BANDS; i++) {
@@ -90,14 +159,16 @@ public:
 
     /**
      * Soft-knee analog-style saturation cushion.
-     * For |x| <= 0.7: perfectly linear and transparent (100% untouched).
-     * For |x| > 0.7: smoothly curves towards 1.0 using tanh, eliminating harsh digital red-line clipping.
+     * For |x| <= threshold: perfectly linear and transparent (100% untouched).
+     * For |x| > threshold: smoothly curves towards 1.0 using tanh, eliminating harsh digital red-line clipping.
      */
-    static inline double soft_knee(double x) {
+    static inline double soft_knee(double x, double threshold) {
         double abs_x = std::abs(x);
-        if (abs_x <= 0.7) return x;
-        double excess = abs_x - 0.7;
-        double compressed = 0.7 + 0.3 * std::tanh(excess / 0.3);
+        if (abs_x <= threshold) return x;
+        double margin = 1.0 - threshold;
+        if (margin < 0.001) margin = 0.001;
+        double excess = abs_x - threshold;
+        double compressed = threshold + margin * std::tanh(excess / margin);
         return (x > 0.0) ? compressed : -compressed;
     }
 
@@ -109,7 +180,7 @@ public:
         for (int i = 0; i < NUM_BANDS; i++) {
             s = filters[i].process(ch, s);
         }
-        return soft_knee(s);
+        return soft_knee(s, soft_knee_threshold.load(std::memory_order_relaxed));
     }
 
 private:
@@ -153,14 +224,19 @@ private:
                 filters[i].a2 = a2 / a0;
 
                 if (gain_db > 0.0) {
-                    total_weighted_boost_db += gain_db * BAND_WEIGHTS[i];
+                    total_weighted_boost_db += gain_db * band_weights[i];
                 }
             }
         }
+        if (en && manual_preamp_mode.load(std::memory_order_relaxed) && std::abs(manual_preamp_db) >= 0.05) {
+            all_flat = false;
+        }
         is_flat.store(all_flat, std::memory_order_relaxed);
-        // Frequency-weighted progressive soft-curve auto pre-amp:
-        if (en && total_weighted_boost_db > 0.0) {
-            double attenuation_db = 8.0 * (1.0 - std::exp(-total_weighted_boost_db / 8.0));
+        // Pre-amp gain: manual mode applies fixed gain, dynamic mode uses frequency-weighted auto-attenuation
+        if (manual_preamp_mode.load(std::memory_order_relaxed)) {
+            preamp_gain = std::pow(10.0, manual_preamp_db / 20.0);
+        } else if (en && total_weighted_boost_db > 0.0 && max_attenuation_db > 0.0) {
+            double attenuation_db = max_attenuation_db * (1.0 - std::exp(-total_weighted_boost_db / max_attenuation_db));
             preamp_gain = std::pow(10.0, -attenuation_db / 20.0);
         } else {
             preamp_gain = 1.0;

@@ -132,9 +132,15 @@ class UsbExclusiveOutput(private val context: Context) {
         val eqEnabled = Preferences.isEqualizerEnabled()
         nativeSetEqEnabled(nativeHandle, eqEnabled)
         val savedLevels = Preferences.getEqualizerBandLevels(5)
+        val savedWeights = Preferences.getEqualizerBandWeights(5)
         for (i in 0 until 5) {
             nativeSetEqBand(nativeHandle, i, savedLevels[i].toInt())
+            nativeSetEqBandWeight(nativeHandle, i, savedWeights[i].toDouble())
         }
+        nativeSetEqMaxAttenuation(nativeHandle, Preferences.getEqualizerMaxAttenuation().toDouble())
+        nativeSetEqSoftKneeThreshold(nativeHandle, Preferences.getEqualizerSoftKneeThreshold().toDouble())
+        nativeSetEqPreampMode(nativeHandle, Preferences.isEqualizerManualPreampMode())
+        nativeSetEqManualPreamp(nativeHandle, Preferences.getEqualizerManualPreampDb().toDouble())
 
         Log.i(TAG, "USB Exclusive streaming started: ${config.sampleRate}Hz ${config.bitDepth}bit via iface=${config.streamingIface} alt=${config.altSetting}")
         return true
@@ -212,6 +218,11 @@ class UsbExclusiveOutput(private val context: Context) {
     private external fun nativeSetHwVolume(handle: Long, enabled: Boolean, volDb256: Short, swGain: Float)
     private external fun nativeSetEqEnabled(handle: Long, enabled: Boolean)
     private external fun nativeSetEqBand(handle: Long, band: Int, levelMb: Int)
+    private external fun nativeSetEqBandWeight(handle: Long, band: Int, weight: Double)
+    private external fun nativeSetEqMaxAttenuation(handle: Long, attenDb: Double)
+    private external fun nativeSetEqSoftKneeThreshold(handle: Long, threshold: Double)
+    private external fun nativeSetEqPreampMode(handle: Long, manual: Boolean)
+    private external fun nativeSetEqManualPreamp(handle: Long, db: Double)
     private external fun nativeStop(handle: Long)
     private external fun nativeClose(handle: Long)
 
@@ -231,6 +242,31 @@ class UsbExclusiveOutput(private val context: Context) {
         @JvmStatic
         fun setNativeEqBand(band: Int, levelMb: Int) {
             activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqBand(it.nativeHandle, band, levelMb) }
+        }
+
+        @JvmStatic
+        fun setNativeEqBandWeight(band: Int, weight: Double) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqBandWeight(it.nativeHandle, band, weight) }
+        }
+
+        @JvmStatic
+        fun setNativeEqMaxAttenuation(attenDb: Double) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqMaxAttenuation(it.nativeHandle, attenDb) }
+        }
+
+        @JvmStatic
+        fun setNativeEqSoftKneeThreshold(threshold: Double) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqSoftKneeThreshold(it.nativeHandle, threshold) }
+        }
+
+        @JvmStatic
+        fun setNativeEqPreampMode(manual: Boolean) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqPreampMode(it.nativeHandle, manual) }
+        }
+
+        @JvmStatic
+        fun setNativeEqManualPreamp(db: Double) {
+            activeOutput?.let { if (it.nativeHandle != 0L) it.nativeSetEqManualPreamp(it.nativeHandle, db) }
         }
     }
 }

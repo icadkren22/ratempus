@@ -21,4 +21,15 @@ class EqualizerManager(
     fun getCenterFreq(band: Short): Int? = backend.getCenterFreq(band)
     fun getBandLevel(band: Short): Short? = backend.getBandLevel(band)
     fun setEnabled(enabled: Boolean) = backend.setEnabled(enabled)
+
+    fun setBandWeight(band: Short, weight: Float) = backend.setBandWeight(band, weight)
+    fun getBandWeight(band: Short): Float = backend.getBandWeight(band)
+    fun setMaxAttenuation(attenDb: Float) = backend.setMaxAttenuation(attenDb)
+    fun getMaxAttenuation(): Float = backend.getMaxAttenuation()
+    fun setSoftKneeThreshold(threshold: Float) = backend.setSoftKneeThreshold(threshold)
+    fun getSoftKneeThreshold(): Float = backend.getSoftKneeThreshold()
+    fun setManualPreampMode(manual: Boolean) = backend.setManualPreampMode(manual)
+    fun isManualPreampMode(): Boolean = backend.isManualPreampMode()
+    fun setManualPreampDb(db: Float) = backend.setManualPreampDb(db)
+    fun getManualPreampDb(): Float = backend.getManualPreampDb()
 }
