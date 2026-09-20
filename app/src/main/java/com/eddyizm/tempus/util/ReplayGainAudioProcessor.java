@@ -180,46 +180,8 @@ public final class ReplayGainAudioProcessor extends BaseAudioProcessor {
     public void queueInput(ByteBuffer inputBuffer) {
         int remaining = inputBuffer.remaining();
         if (remaining == 0) return;
-
-        // Mark that real audio has flowed through the processor, so a
-        // subsequent onFlush() knows it's a mid-stream boundary (safe to
-        // consume pending) rather than the initial startup flush.
-        hasProcessedAnyInput = true;
-
-        // NOTE: Same-format gapless gain promotion was intentionally removed from
-        // queueInput. On cached streams the decoder runs far ahead of playback,
-        // so endOfStreamPending becomes true long before audio actually reaches
-        // the track boundary. Triggering the promotion here caused a volume spike
-        // mid-track after every seek. Gain changes at track boundaries are now
-        // handled exclusively by applyGain() called from onMediaItemTransition,
-        // which fires at the correct playback time.
-
-        float target = targetGainLinear;
-        if (!ramping && Math.abs(target - activeGainLinear) > 0.0001f) {
-            Log.d(TAG, "queueInput: RAMP START active=" + activeGainLinear
-                    + " -> target=" + target);
-            rampFromGain = activeGainLinear;
-            rampToGain = target;
-            rampFramesDone = 0;
-            ramping = true;
-        }
-
-        if (!ramping && Math.abs(activeGainLinear - 1.0f) < 0.0001f) {
-            ByteBuffer output = replaceOutputBuffer(remaining);
-            output.put(inputBuffer);
-            output.flip();
-            return;
-        }
-
         ByteBuffer output = replaceOutputBuffer(remaining);
-        output.order(ByteOrder.nativeOrder());
-
-        if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT) {
-            process16Bit(inputBuffer, output);
-        } else {
-            processFloat(inputBuffer, output);
-        }
-
+        output.put(inputBuffer);
         output.flip();
     }
 

@@ -227,8 +227,8 @@
                 android:key="loudness_preamp"
                 android:title="@string/settings_loudness_preamp_title"
                 android:summary="@string/settings_loudness_preamp_summary"
-                android:max="15"
-                app:min="-15"
+                android:max="24"
+                app:min="-24"
                 app:showSeekBarValue="true"
                 app:adjustable="true" />
 

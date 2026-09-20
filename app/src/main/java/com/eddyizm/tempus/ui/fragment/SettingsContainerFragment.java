@@ -193,6 +193,8 @@ public class SettingsContainerFragment extends PreferenceFragmentCompat {
         actionBuiltinEqualizer();
         actionEqualizerSelector();
         actionReplayGainPreamp();
+        actionReplayGainMode();
+        actionDirectHdToggle();
 
         applyAccordionState();
     }
@@ -895,7 +897,10 @@ public class SettingsContainerFragment extends PreferenceFragmentCompat {
     }
 
     private void actionReplayGainPreamp() {
-        SeekBarPreference preampPref = findPreference("replay_gain_preamp");
+        SeekBarPreference preampPref = findPreference("loudness_preamp");
+        if (preampPref == null) {
+            preampPref = findPreference("replay_gain_preamp");
+        }
         if (preampPref == null) return;
 
         // Seed the widget with the currently persisted value so it shows the
@@ -907,14 +912,79 @@ public class SettingsContainerFragment extends PreferenceFragmentCompat {
 
             int dB = (Integer) newValue;
             Preferences.setLoudnessPreamp((float) dB);
+            com.eddyizm.tempus.equalizer.EqualizerDispatcher.setManualPreampDb((double) dB);
 
-            // Immediately re-apply gain to whatever is playing so the user can
-            // hear the effect without restarting playback.
+            return true;
+        });
+    }
+
+    /**
+     * Attaches listeners to replay_gain_mode and replay_gain_prevent_clipping so that
+     * toggling either setting immediately re-applies the RG gain to the currently playing
+     * track — no track change required.
+     */
+    private void actionReplayGainMode() {
+        ListPreference modePref = findPreference("replay_gain_mode");
+        if (modePref != null) {
+            modePref.setOnPreferenceChangeListener((preference, newValue) -> {
+                // Persist first (return true), then reapply on the next looper cycle so
+                // Preferences.getReplayGainMode() already returns the new value.
+                preference.getSharedPreferences().edit()
+                        .putString("replay_gain_mode", (String) newValue)
+                        .apply();
+                if (isServiceBound && mediaServiceBinder != null) {
+                    com.eddyizm.tempus.util.ReplayGainUtil.reapplyCurrentTrackGain(
+                            mediaServiceBinder.getPlayer());
+                }
+                return true;
+            });
+        }
+
+        Preference clipPref = findPreference("replay_gain_prevent_clipping");
+        if (clipPref != null) {
+            clipPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                if (isServiceBound && mediaServiceBinder != null) {
+                    com.eddyizm.tempus.util.ReplayGainUtil.reapplyCurrentTrackGain(
+                            mediaServiceBinder.getPlayer());
+                }
+                return true;
+            });
+        }
+    }
+
+
+    /**
+     * Wires the Direct HD toggle so that enabling or disabling it takes effect immediately
+     * on the currently playing track — no app restart required.
+     *
+     * <p>Mechanism: {@link com.eddyizm.tempus.audio.NativeDirectAudioOutputProvider#getAudioOutput}
+     * reads {@code Preferences.isDirectHdEnabled()} live, but ExoPlayer only calls it when the
+     * audio sink is fully re-initialized (not on a plain seek flush). We therefore do a
+     * stop → seekTo → prepare → play cycle, which causes {@link androidx.media3.exoplayer.audio.DefaultAudioSink}
+     * to tear down its current {@link androidx.media3.exoplayer.audio.AudioOutput} and request
+     * a fresh one from the provider with the new setting.
+     */
+    private void actionDirectHdToggle() {
+        Preference pref = findPreference("direct_hd_enabled");
+        if (pref == null) return;
+
+        pref.setOnPreferenceChangeListener((preference, newValue) -> {
+            if (!(newValue instanceof Boolean)) return true;
+
+            com.eddyizm.tempus.util.Preferences.setDirectHdEnabled((Boolean) newValue);
+
             if (isServiceBound && mediaServiceBinder != null) {
-                com.eddyizm.tempus.util.ReplayGainUtil.reapplyCurrentTrackGain(
-                        mediaServiceBinder.getPlayer());
+                androidx.media3.common.Player player = mediaServiceBinder.getPlayer();
+                int idx = player.getCurrentMediaItemIndex();
+                long pos = player.getCurrentPosition();
+                boolean wasPlaying = player.isPlaying();
+                // stop() tears down DefaultAudioSink entirely; prepare() rebuilds it and
+                // calls getAudioOutput() fresh, so the provider picks up the new pref.
+                player.stop();
+                player.seekTo(idx, pos);
+                player.prepare();
+                if (wasPlaying) player.play();
             }
-
             return true;
         });
     }

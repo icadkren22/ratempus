@@ -41,6 +41,7 @@ public:
     static constexpr double DEFAULT_MAX_ATTENUATION_DB = 8.0;
     static constexpr double DEFAULT_SOFT_KNEE_THRESHOLD = 0.7;
     static constexpr double DEFAULT_Q = 1.414;
+    static constexpr bool DEFAULT_AUTO_PREAMP_ENABLED = true;
 
     std::atomic<bool> enabled{false};
     std::atomic<bool> is_flat{true};
@@ -50,8 +51,9 @@ private:
     double band_weights[NUM_BANDS] = {0.40, 0.60, 0.65, 0.60, 0.40};
     double max_attenuation_db = 8.0;
     std::atomic<double> soft_knee_threshold{0.7};
-    std::atomic<bool> manual_preamp_mode{false};
+    std::atomic<bool> auto_preamp_enabled{true};
     double manual_preamp_db = 0.0;
+    double rg_preamp_db = 0.0;
     Biquad filters[NUM_BANDS];
     uint32_t sample_rate = 44100;
     // Auto pre-amp: frequency-weighted progressive soft-curve to prevent clipping while keeping output loud
@@ -128,14 +130,14 @@ public:
         return soft_knee_threshold.load(std::memory_order_relaxed);
     }
 
-    void set_manual_preamp_mode(bool manual) {
-        manual_preamp_mode.store(manual, std::memory_order_relaxed);
+    void set_auto_preamp_enabled(bool en) {
+        auto_preamp_enabled.store(en, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(mtx);
         update_coefficients_locked();
     }
 
-    bool get_manual_preamp_mode() const {
-        return manual_preamp_mode.load(std::memory_order_relaxed);
+    bool get_auto_preamp_enabled() const {
+        return auto_preamp_enabled.load(std::memory_order_relaxed);
     }
 
     void set_manual_preamp_db(double db) {
@@ -150,11 +152,56 @@ public:
         return manual_preamp_db;
     }
 
+    void set_rg_preamp_db(double db) {
+        if (db < -60.0) db = -60.0;
+        if (db > 24.0) db = 24.0;
+        std::lock_guard<std::mutex> lock(mtx);
+        rg_preamp_db = db;
+        update_coefficients_locked();
+    }
+
+    double get_rg_preamp_db() const {
+        return rg_preamp_db;
+    }
+
     void reset() {
         std::lock_guard<std::mutex> lock(mtx);
         for (int i = 0; i < NUM_BANDS; i++) {
             filters[i].reset();
         }
+    }
+
+    void apply_config(bool en, const int* levels, const double* weights,
+                      double manual_db, bool auto_preamp_en, double max_atten, double knee) {
+        std::lock_guard<std::mutex> lock(mtx);
+        enabled.store(en, std::memory_order_relaxed);
+        if (levels) {
+            for (int i = 0; i < NUM_BANDS; i++) {
+                int lvl = levels[i];
+                if (lvl < -1500) lvl = -1500;
+                if (lvl > 1500) lvl = 1500;
+                band_levels[i] = lvl;
+            }
+        }
+        if (weights) {
+            for (int i = 0; i < NUM_BANDS; i++) {
+                double w = weights[i];
+                if (w < 0.0) w = 0.0;
+                if (w > 1.0) w = 1.0;
+                band_weights[i] = w;
+            }
+        }
+        if (manual_db < -24.0) manual_db = -24.0;
+        if (manual_db > 24.0) manual_db = 24.0;
+        manual_preamp_db = manual_db;
+        auto_preamp_enabled.store(auto_preamp_en, std::memory_order_relaxed);
+        if (max_atten < 0.0) max_atten = 0.0;
+        if (max_atten > 24.0) max_atten = 24.0;
+        max_attenuation_db = max_atten;
+        if (knee < 0.1) knee = 0.1;
+        if (knee > 1.0) knee = 1.0;
+        soft_knee_threshold.store(knee, std::memory_order_relaxed);
+        update_coefficients_locked();
     }
 
     /**
@@ -173,14 +220,19 @@ public:
     }
 
     inline double process_sample(int ch, double in) {
-        if (!enabled.load(std::memory_order_relaxed) || is_flat.load(std::memory_order_relaxed)) {
+        // Skip entirely only when nothing would change (no preamp, no active bands).
+        if (is_flat.load(std::memory_order_relaxed)) {
             return in;
         }
         double s = in * preamp_gain;
-        for (int i = 0; i < NUM_BANDS; i++) {
-            s = filters[i].process(ch, s);
+        // Only run IIR band filters when EQ is enabled.
+        if (enabled.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < NUM_BANDS; i++) {
+                s = filters[i].process(ch, s);
+            }
+            s = soft_knee(s, soft_knee_threshold.load(std::memory_order_relaxed));
         }
-        return soft_knee(s, soft_knee_threshold.load(std::memory_order_relaxed));
+        return s;
     }
 
 private:
@@ -228,19 +280,25 @@ private:
                 }
             }
         }
-        if (en && manual_preamp_mode.load(std::memory_order_relaxed) && std::abs(manual_preamp_db) >= 0.05) {
+        double total_preamp_db = manual_preamp_db + rg_preamp_db;
+        if (std::abs(total_preamp_db) >= 0.05) {
             all_flat = false;
         }
         is_flat.store(all_flat, std::memory_order_relaxed);
-        // Pre-amp gain: manual mode applies fixed gain, dynamic mode uses frequency-weighted auto-attenuation
-        if (manual_preamp_mode.load(std::memory_order_relaxed)) {
-            preamp_gain = std::pow(10.0, manual_preamp_db / 20.0);
-        } else if (en && total_weighted_boost_db > 0.0 && max_attenuation_db > 0.0) {
+
+        // Pre-amp gain: manual slider (-24 to +24 dB) + ReplayGain
+        double combined_preamp_gain = (std::abs(total_preamp_db) >= 0.05)
+            ? std::pow(10.0, total_preamp_db / 20.0)
+            : 1.0;
+
+        // Auto pre-amp: dynamic headroom attenuation applied AFTER manual pre-amp
+        double auto_gain = 1.0;
+        if (en && auto_preamp_enabled.load(std::memory_order_relaxed) && total_weighted_boost_db > 0.0 && max_attenuation_db > 0.0) {
             double attenuation_db = max_attenuation_db * (1.0 - std::exp(-total_weighted_boost_db / max_attenuation_db));
-            preamp_gain = std::pow(10.0, -attenuation_db / 20.0);
-        } else {
-            preamp_gain = 1.0;
+            auto_gain = std::pow(10.0, -attenuation_db / 20.0);
         }
+
+        preamp_gain = combined_preamp_gain * auto_gain;
     }
 };
 

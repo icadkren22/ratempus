@@ -32,9 +32,9 @@ interface EqualizerBackend {
 
     fun getSoftKneeThreshold(): Float = 0.7f
 
-    fun setManualPreampMode(manual: Boolean) {}
+    fun setAutoPreampEnabled(enabled: Boolean) {}
 
-    fun isManualPreampMode(): Boolean = false
+    fun isAutoPreampEnabled(): Boolean = true
 
     fun setManualPreampDb(db: Float) {}
 

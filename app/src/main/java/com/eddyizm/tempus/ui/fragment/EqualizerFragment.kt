@@ -38,6 +38,7 @@ class EqualizerFragment : Fragment() {
     private var equalizerManager: EqualizerManager? = null
     private lateinit var eqBandsContainer: LinearLayout
     private lateinit var eqAdvancedContainer: LinearLayout
+    private lateinit var eqPreampContainer: LinearLayout
     private lateinit var eqSwitch: Switch
     private lateinit var resetButton: Button
     private lateinit var safeSpace: Space
@@ -53,10 +54,8 @@ class EqualizerFragment : Fragment() {
     private var softKneeSeekBar: SeekBar? = null
     private var softKneeLabel: TextView? = null
     private var softKneeResetBtn: ImageView? = null
-    private var preampModeSwitch: Switch? = null
-    private var preampModeSubtitle: TextView? = null
-    private var dynamicPreampContainer: LinearLayout? = null
-    private var manualPreampContainer: LinearLayout? = null
+    private var autoPreampSwitch: Switch? = null
+    private var autoPreampContainer: LinearLayout? = null
     private var manualPreampSeekBar: SeekBar? = null
     private var manualPreampLabel: TextView? = null
     private var manualPreampResetBtn: ImageView? = null
@@ -148,6 +147,7 @@ class EqualizerFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         eqBandsContainer = view.findViewById(R.id.eq_bands_container)
         eqAdvancedContainer = view.findViewById(R.id.eq_advanced_container)
+        eqPreampContainer = view.findViewById(R.id.eq_preamp_container)
         resetButton = view.findViewById(R.id.equalizer_reset_button)
         safeSpace = view.findViewById(R.id.equalizer_bottom_space)
     }
@@ -181,6 +181,7 @@ class EqualizerFragment : Fragment() {
             updateUiEnabledState(isChecked)
         }
 
+        createManualPreampSlider()
         createBandSliders()
         if (Preferences.getSelectedEqualizer() == 1) {
             eqAdvancedContainer.visibility = View.VISIBLE
@@ -229,17 +230,113 @@ class EqualizerFragment : Fragment() {
             btn.alpha = if (isEnabled && isDiff) 1.0f else 0.35f
         }
 
-        preampModeSwitch?.isEnabled = isEnabled
-        manualPreampSeekBar?.isEnabled = isEnabled
-        manualPreampResetBtn?.let { btn ->
-            val curDb = (manualPreampSeekBar?.progress ?: 24) - 24
-            val isDiff = curDb != 0
-            btn.isEnabled = isEnabled && isDiff
-            btn.alpha = if (isEnabled && isDiff) 1.0f else 0.35f
-        }
+
+        autoPreampSwitch?.isEnabled = isEnabled
     }
 
     private fun formatDb(value: Int): String = if (value > 0) "+$value dB" else "$value dB"
+
+    private fun createManualPreampSlider() {
+        val manager = equalizerManager ?: return
+        eqPreampContainer.removeAllViews()
+        manualPreampSeekBar = null
+        manualPreampLabel = null
+        manualPreampResetBtn = null
+
+        val savedManualDb = Preferences.getEqualizerManualPreampDb().roundToInt().coerceIn(-24, 24)
+
+        val manualRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 4.dpToPx(context)
+                bottomMargin = 8.dpToPx(context)
+            }
+            setPadding(0, 4.dpToPx(context), 0, 4.dpToPx(context))
+        }
+
+        val manualTextCol = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(110.dpToPx(context), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        val manualTitle = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
+            text = getString(R.string.equalizer_manual_preamp_title)
+        }
+        val manualHint = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
+            text = getString(R.string.equalizer_manual_preamp_hint)
+            alpha = 0.6f
+        }
+        manualTextCol.addView(manualTitle)
+        manualTextCol.addView(manualHint)
+        manualRow.addView(manualTextCol)
+
+        val manualLbl = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
+            text = formatDb(savedManualDb)
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(54.dpToPx(context), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+
+        val manualReset = ImageView(requireContext()).apply {
+            setImageResource(R.drawable.ic_replay)
+            contentDescription = getString(R.string.equalizer_reset)
+            val outValue = TypedValue()
+            context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
+            setBackgroundResource(outValue.resourceId)
+            val sizePx = 36.dpToPx(context)
+            val padPx = 6.dpToPx(context)
+            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                marginStart = 4.dpToPx(context)
+            }
+            setPadding(padPx, padPx, padPx, padPx)
+            val isDiff = savedManualDb != 0
+            isEnabled = isDiff
+            alpha = if (isDiff) 1.0f else 0.35f
+        }
+
+        val manualSb = SeekBar(requireContext()).apply {
+            max = 48 // 0..48 maps to -24..+24 dB (progress - 24)
+            progress = savedManualDb + 24
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val db = progress - 24
+                    if (fromUser) {
+                        manager.setManualPreampDb(db.toFloat())
+                        Preferences.setEqualizerManualPreampDb(db.toFloat())
+                    }
+                    manualLbl.text = formatDb(db)
+                    val isDiff = db != 0
+                    manualReset.isEnabled = isDiff
+                    manualReset.alpha = if (isDiff) 1.0f else 0.35f
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {}
+            })
+        }
+
+        manualReset.setOnClickListener {
+            manualSb.progress = 24
+            manager.setManualPreampDb(0f)
+            Preferences.setEqualizerManualPreampDb(0f)
+            manualLbl.text = formatDb(0)
+            manualReset.isEnabled = false
+            manualReset.alpha = 0.35f
+        }
+        manualLbl.setOnClickListener {
+            if (manualReset.isEnabled) manualReset.performClick()
+        }
+
+        manualPreampSeekBar = manualSb
+        manualPreampLabel = manualLbl
+        manualPreampResetBtn = manualReset
+        manualRow.addView(manualSb)
+        manualRow.addView(manualLbl)
+        manualRow.addView(manualReset)
+        eqPreampContainer.addView(manualRow)
+    }
 
     private fun createBandSliders() {
         val manager = equalizerManager ?: return
@@ -371,178 +468,18 @@ class EqualizerFragment : Fragment() {
         softKneeSeekBar = null
         softKneeLabel = null
         softKneeResetBtn = null
-        preampModeSwitch = null
-        preampModeSubtitle = null
-        dynamicPreampContainer = null
-        manualPreampContainer = null
-        manualPreampSeekBar = null
-        manualPreampLabel = null
-        manualPreampResetBtn = null
+        autoPreampSwitch = null
+        autoPreampContainer = null
 
         val isEqActive = eqSwitch.isChecked
         val bands = manager.getNumberOfBands()
-        val isManualMode = Preferences.isEqualizerManualPreampMode()
 
-        // ── 0. Pre-Amp Mode Toggle Row ──
-        val modeRow = LinearLayout(requireContext()).apply {
+        // ── Auto Pre-Amp Settings ──
+        val isAutoPreamp = Preferences.isEqualizerAutoPreampEnabled()
+
+        val autoPreampRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 28.dpToPx(context)
-                bottomMargin = 8.dpToPx(context)
-            }
-        }
-
-        val textCol = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val modeTitle = TextView(requireContext(), null, 0, R.style.LabelMedium).apply {
-            text = getString(R.string.equalizer_preamp_mode_title)
-        }
-        val modeSubtitle = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
-            text = if (isManualMode) getString(R.string.equalizer_preamp_manual) else getString(R.string.equalizer_preamp_dynamic)
-            alpha = 0.7f
-        }
-        textCol.addView(modeTitle)
-        textCol.addView(modeSubtitle)
-        modeRow.addView(textCol)
-
-        val modeSwitch = Switch(requireContext()).apply {
-            isChecked = isManualMode
-            isEnabled = isEqActive
-        }
-        modeRow.addView(modeSwitch)
-        eqAdvancedContainer.addView(modeRow)
-
-        preampModeSwitch = modeSwitch
-        preampModeSubtitle = modeSubtitle
-
-        val dynamicContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            visibility = if (isManualMode) View.GONE else View.VISIBLE
-        }
-        dynamicPreampContainer = dynamicContainer
-
-        val manualContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            visibility = if (isManualMode) View.VISIBLE else View.GONE
-        }
-        manualPreampContainer = manualContainer
-
-        modeSwitch.setOnCheckedChangeListener { _, isChecked ->
-            Preferences.setEqualizerManualPreampMode(isChecked)
-            manager.setManualPreampMode(isChecked)
-            modeSubtitle.text = if (isChecked) getString(R.string.equalizer_preamp_manual) else getString(R.string.equalizer_preamp_dynamic)
-            dynamicContainer.visibility = if (isChecked) View.GONE else View.VISIBLE
-            manualContainer.visibility = if (isChecked) View.VISIBLE else View.GONE
-        }
-
-        // ── 0.1 Manual Pre-Amp Gain Row (-24 to +24 dB, default 0 dB) ──
-        val savedManualDb = Preferences.getEqualizerManualPreampDb().roundToInt().coerceIn(-24, 24)
-        val manualRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                val margin = 12.dpToPx(context)
-                topMargin = margin
-                bottomMargin = margin
-            }
-            setPadding(0, 4.dpToPx(context), 0, 4.dpToPx(context))
-        }
-
-        val manualTitle = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
-            text = getString(R.string.equalizer_manual_preamp_title)
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(110.dpToPx(context), LinearLayout.LayoutParams.WRAP_CONTENT)
-        }
-        manualRow.addView(manualTitle)
-
-        val manualLbl = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
-            text = formatDb(savedManualDb)
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(54.dpToPx(context), LinearLayout.LayoutParams.WRAP_CONTENT)
-        }
-
-        val manualReset = ImageView(requireContext()).apply {
-            setImageResource(R.drawable.ic_replay)
-            contentDescription = getString(R.string.equalizer_reset)
-            val outValue = TypedValue()
-            context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
-            setBackgroundResource(outValue.resourceId)
-            val sizePx = 36.dpToPx(context)
-            val padPx = 6.dpToPx(context)
-            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
-                marginStart = 4.dpToPx(context)
-            }
-            setPadding(padPx, padPx, padPx, padPx)
-            val isDiff = savedManualDb != 0
-            isEnabled = isEqActive && isDiff
-            alpha = if (isEqActive && isDiff) 1.0f else 0.35f
-        }
-
-        val manualSb = SeekBar(requireContext()).apply {
-            max = 48 // 0..48 maps to -24..+24 dB (progress - 24)
-            progress = savedManualDb + 24
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val db = progress - 24
-                    if (fromUser) {
-                        manager.setManualPreampDb(db.toFloat())
-                        Preferences.setEqualizerManualPreampDb(db.toFloat())
-                    }
-                    manualLbl.text = formatDb(db)
-                    val active = eqSwitch.isChecked
-                    val isDiff = db != 0
-                    manualReset.isEnabled = active && isDiff
-                    manualReset.alpha = if (active && isDiff) 1.0f else 0.35f
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar) {}
-            })
-        }
-
-        manualReset.setOnClickListener {
-            manualSb.progress = 24
-            manager.setManualPreampDb(0f)
-            Preferences.setEqualizerManualPreampDb(0f)
-            manualLbl.text = formatDb(0)
-            manualReset.isEnabled = false
-            manualReset.alpha = 0.35f
-        }
-        manualLbl.setOnClickListener {
-            if (manualReset.isEnabled) manualReset.performClick()
-        }
-
-        manualPreampSeekBar = manualSb
-        manualPreampLabel = manualLbl
-        manualPreampResetBtn = manualReset
-        manualRow.addView(manualSb)
-        manualRow.addView(manualLbl)
-        manualRow.addView(manualReset)
-        manualContainer.addView(manualRow)
-        eqAdvancedContainer.addView(manualContainer)
-        eqAdvancedContainer.addView(dynamicContainer)
-
-        // ── 1. Dynamics & Headroom ──
-        val dynamicsHeader = TextView(requireContext(), null, 0, R.style.LabelMedium).apply {
-            text = getString(R.string.equalizer_dynamics_title)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -551,9 +488,63 @@ class EqualizerFragment : Fragment() {
                 bottomMargin = 8.dpToPx(context)
             }
         }
-        dynamicContainer.addView(dynamicsHeader)
 
-        // 1.1 Max Attenuation row (0 to 20 dB, default 8 dB)
+        val autoPreampTextCol = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val autoPreampTitle = TextView(requireContext(), null, 0, R.style.LabelMedium).apply {
+            text = getString(R.string.equalizer_auto_preamp_title)
+        }
+        val autoPreampSubtitle = TextView(requireContext(), null, 0, R.style.LabelSmall).apply {
+            text = getString(R.string.equalizer_auto_preamp_summary)
+            alpha = 0.7f
+        }
+        autoPreampTextCol.addView(autoPreampTitle)
+        autoPreampTextCol.addView(autoPreampSubtitle)
+        autoPreampRow.addView(autoPreampTextCol)
+
+        val autoSwitch = Switch(requireContext()).apply {
+            isChecked = isAutoPreamp
+            isEnabled = isEqActive
+        }
+        autoPreampRow.addView(autoSwitch)
+        eqAdvancedContainer.addView(autoPreampRow)
+
+        autoPreampSwitch = autoSwitch
+
+        val autoContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            visibility = if (isAutoPreamp) View.VISIBLE else View.GONE
+        }
+        autoPreampContainer = autoContainer
+        eqAdvancedContainer.addView(autoContainer)
+
+        autoSwitch.setOnCheckedChangeListener { _, isChecked ->
+            Preferences.setEqualizerAutoPreampEnabled(isChecked)
+            manager.setAutoPreampEnabled(isChecked)
+            autoContainer.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        // ── 2.1 Dynamics & Headroom ──
+        val dynamicsHeader = TextView(requireContext(), null, 0, R.style.LabelMedium).apply {
+            text = getString(R.string.equalizer_dynamics_title)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 16.dpToPx(context)
+                bottomMargin = 8.dpToPx(context)
+            }
+        }
+        autoContainer.addView(dynamicsHeader)
+
+        // 2.2 Max Attenuation row (0 to 24 dB, default 8 dB)
         val savedMaxAtten = Preferences.getEqualizerMaxAttenuation()
         val defaultMaxAtten = Preferences.DEFAULT_MAX_ATTENUATION
         val maxAttenRow = LinearLayout(requireContext()).apply {
@@ -640,7 +631,7 @@ class EqualizerFragment : Fragment() {
         maxAttenRow.addView(maxAttenSb)
         maxAttenRow.addView(maxAttenLbl)
         maxAttenRow.addView(maxAttenReset)
-        dynamicContainer.addView(maxAttenRow)
+        autoContainer.addView(maxAttenRow)
 
         // 1.2 Cushion Zone Cut-Off row (0.10 to 1.00, default 0.70)
         val savedKnee = Preferences.getEqualizerSoftKneeThreshold()
@@ -730,7 +721,7 @@ class EqualizerFragment : Fragment() {
         kneeRow.addView(kneeSb)
         kneeRow.addView(kneeLbl)
         kneeRow.addView(kneeReset)
-        dynamicContainer.addView(kneeRow)
+        autoContainer.addView(kneeRow)
 
         // ── 2. Auto Pre-Amp Band Weights ──
         val weightsHeader = TextView(requireContext(), null, 0, R.style.LabelMedium).apply {
@@ -743,7 +734,7 @@ class EqualizerFragment : Fragment() {
                 bottomMargin = 8.dpToPx(context)
             }
         }
-        dynamicContainer.addView(weightsHeader)
+        autoContainer.addView(weightsHeader)
 
         val savedWeights = Preferences.getEqualizerBandWeights(bands)
         val defaultWeights = Preferences.DEFAULT_BAND_WEIGHTS
@@ -849,7 +840,7 @@ class EqualizerFragment : Fragment() {
             row.addView(sb)
             row.addView(weightLbl)
             row.addView(resetBtn)
-            dynamicContainer.addView(row)
+            autoContainer.addView(row)
         }
     }
 
@@ -915,21 +906,23 @@ class EqualizerFragment : Fragment() {
                 it.alpha = 0.35f
             }
         }
-        // Reset Pre-Amp Mode & Manual Pre-Amp
-        manager.setManualPreampMode(Preferences.DEFAULT_MANUAL_PREAMP_MODE)
-        Preferences.setEqualizerManualPreampMode(Preferences.DEFAULT_MANUAL_PREAMP_MODE)
-        manager.setManualPreampDb(Preferences.DEFAULT_MANUAL_PREAMP_DB)
-        Preferences.setEqualizerManualPreampDb(Preferences.DEFAULT_MANUAL_PREAMP_DB)
-        preampModeSwitch?.isChecked = false
-        preampModeSubtitle?.text = getString(R.string.equalizer_preamp_dynamic)
-        manualPreampSeekBar?.progress = 24
-        manualPreampLabel?.text = formatDb(0)
+        // Reset Manual Pre-Amp (0 dB)
+        val defaultManualDb = Preferences.DEFAULT_MANUAL_PREAMP_DB
+        manager.setManualPreampDb(defaultManualDb)
+        Preferences.setEqualizerManualPreampDb(defaultManualDb)
+        manualPreampSeekBar?.progress = (defaultManualDb + 24).roundToInt()
+        manualPreampLabel?.text = formatDb(defaultManualDb.roundToInt())
         manualPreampResetBtn?.let {
             it.isEnabled = false
             it.alpha = 0.35f
         }
-        dynamicPreampContainer?.visibility = View.VISIBLE
-        manualPreampContainer?.visibility = View.GONE
+
+        // Reset Auto Pre-Amp (Enabled = true)
+        val defaultAutoPreamp = Preferences.DEFAULT_AUTO_PREAMP_ENABLED
+        manager.setAutoPreampEnabled(defaultAutoPreamp)
+        Preferences.setEqualizerAutoPreampEnabled(defaultAutoPreamp)
+        autoPreampSwitch?.isChecked = defaultAutoPreamp
+        autoPreampContainer?.visibility = if (defaultAutoPreamp) View.VISIBLE else View.GONE
     }
 
     private fun saveBandLevelsToPreferences() {
@@ -999,23 +992,22 @@ class EqualizerFragment : Fragment() {
             }
         }
 
-        // Restore Pre-Amp Mode & Manual Pre-Amp
-        val isManual = Preferences.isEqualizerManualPreampMode()
-        manager.setManualPreampMode(isManual)
-        preampModeSwitch?.isChecked = isManual
-        preampModeSubtitle?.text = if (isManual) getString(R.string.equalizer_preamp_manual) else getString(R.string.equalizer_preamp_dynamic)
-        dynamicPreampContainer?.visibility = if (isManual) View.GONE else View.VISIBLE
-        manualPreampContainer?.visibility = if (isManual) View.VISIBLE else View.GONE
-
+        // Restore Manual Pre-Amp
         val savedManualDb = Preferences.getEqualizerManualPreampDb().roundToInt().coerceIn(-24, 24)
         manager.setManualPreampDb(savedManualDb.toFloat())
         manualPreampSeekBar?.progress = savedManualDb + 24
         manualPreampLabel?.text = formatDb(savedManualDb)
         manualPreampResetBtn?.let {
             val isDiff = savedManualDb != 0
-            it.isEnabled = isEqActive && isDiff
-            it.alpha = if (isEqActive && isDiff) 1.0f else 0.35f
+            it.isEnabled = isDiff
+            it.alpha = if (isDiff) 1.0f else 0.35f
         }
+
+        // Restore Auto Pre-Amp Toggle
+        val isAutoPreamp = Preferences.isEqualizerAutoPreampEnabled()
+        manager.setAutoPreampEnabled(isAutoPreamp)
+        autoPreampSwitch?.isChecked = isAutoPreamp
+        autoPreampContainer?.visibility = if (isAutoPreamp) View.VISIBLE else View.GONE
     }
 
     private fun initAppBar() {

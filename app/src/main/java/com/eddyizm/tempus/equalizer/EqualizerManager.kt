@@ -28,8 +28,8 @@ class EqualizerManager(
     fun getMaxAttenuation(): Float = backend.getMaxAttenuation()
     fun setSoftKneeThreshold(threshold: Float) = backend.setSoftKneeThreshold(threshold)
     fun getSoftKneeThreshold(): Float = backend.getSoftKneeThreshold()
-    fun setManualPreampMode(manual: Boolean) = backend.setManualPreampMode(manual)
-    fun isManualPreampMode(): Boolean = backend.isManualPreampMode()
+    fun setAutoPreampEnabled(enabled: Boolean) = backend.setAutoPreampEnabled(enabled)
+    fun isAutoPreampEnabled(): Boolean = backend.isAutoPreampEnabled()
     fun setManualPreampDb(db: Float) = backend.setManualPreampDb(db)
     fun getManualPreampDb(): Float = backend.getManualPreampDb()
 }

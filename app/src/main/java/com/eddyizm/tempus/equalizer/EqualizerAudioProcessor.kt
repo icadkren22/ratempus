@@ -8,6 +8,7 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import com.eddyizm.tempus.util.Preferences
 
 private const val TAG = "EqualizerAudioProcessor"
 
@@ -35,7 +36,6 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
             try {
                 System.loadLibrary("directaudio")
                 isNativeLoaded = true
-                Log.i(TAG, "libdirectaudio.so loaded successfully for EqualizerAudioProcessor (unified dsp_eq.h)")
             } catch (t: Throwable) {
                 isNativeLoaded = false
                 Log.w(TAG, "libdirectaudio.so not available: ${t.message}")
@@ -43,31 +43,10 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         }
 
         @JvmStatic
+        private external fun nativeGetEqPtr(): Long
+
+        @JvmStatic
         private external fun nativeConfigure(sampleRate: Int)
-
-        @JvmStatic
-        private external fun nativeSetEnabled(enabled: Boolean)
-
-        @JvmStatic
-        private external fun nativeSetBand(band: Int, levelMb: Int)
-
-        @JvmStatic
-        private external fun nativeSetBandWeight(band: Int, weight: Double)
-
-        @JvmStatic
-        private external fun nativeSetMaxAttenuation(attenDb: Double)
-
-        @JvmStatic
-        private external fun nativeSetSoftKneeThreshold(threshold: Double)
-
-        @JvmStatic
-        private external fun nativeSetPreampMode(manual: Boolean)
-
-        @JvmStatic
-        private external fun nativeSetManualPreamp(db: Double)
-
-        @JvmStatic
-        private external fun nativeReset()
 
         @JvmStatic
         private external fun nativeProcessFloat(
@@ -94,6 +73,8 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         }
     }
 
+    val eqPtr: Long get() = if (isNativeLoaded) nativeGetEqPtr() else 0L
+
     val numberOfBands: Int get() = NUM_BANDS
     val bandLevelRange: ShortArray get() = shortArrayOf(MIN_LEVEL_MB.toShort(), MAX_LEVEL_MB.toShort())
 
@@ -101,15 +82,16 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
     private val bandWeights = doubleArrayOf(0.40, 0.60, 0.65, 0.60, 0.40)
     private var maxAttenuationDb: Double = 8.0
     private var softKneeThreshold: Double = 0.70
-    private var manualPreampMode: Boolean = false
+    private var autoPreampEnabled: Boolean = true
     private var manualPreampDb: Double = 0.0
+    private var replayGainDb: Double = 0.0
 
     @Volatile
     var isEnabled: Boolean = false
         set(value) {
             field = value
             if (isNativeLoaded) {
-                try { nativeSetEnabled(value) } catch (_: Throwable) {}
+                try { NativeEqBridge.nativeSetEnabled(eqPtr, value) } catch (_: Throwable) {}
             }
         }
 
@@ -134,8 +116,8 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
 
     private fun updateIsFlat() {
         val bandsFlat = bandLevels.all { it == 0 }
-        val preampFlat = !manualPreampMode || kotlin.math.abs(manualPreampDb) < 0.05
-        isFlat = bandsFlat && preampFlat
+        val manualFlat = kotlin.math.abs(manualPreampDb + replayGainDb) < 0.05
+        isFlat = bandsFlat && manualFlat
     }
 
     fun setBandLevel(band: Int, levelMb: Int) {
@@ -145,7 +127,7 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
                 bandLevels[band] = clamped
                 updateIsFlat()
                 if (isNativeLoaded) {
-                    try { nativeSetBand(band, clamped) } catch (_: Throwable) {}
+                    try { NativeEqBridge.nativeSetBand(eqPtr, band, clamped) } catch (_: Throwable) {}
                 }
             }
         }
@@ -160,7 +142,7 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
             val clamped = weight.coerceIn(0.0, 1.0)
             bandWeights[band] = clamped
             if (isNativeLoaded) {
-                try { nativeSetBandWeight(band, clamped) } catch (_: Throwable) {}
+                try { NativeEqBridge.nativeSetBandWeight(eqPtr, band, clamped) } catch (_: Throwable) {}
             }
         }
     }
@@ -171,7 +153,7 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         val clamped = attenDb.coerceIn(0.0, 24.0)
         maxAttenuationDb = clamped
         if (isNativeLoaded) {
-            try { nativeSetMaxAttenuation(clamped) } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeSetMaxAttenuation(eqPtr, clamped) } catch (_: Throwable) {}
         }
     }
 
@@ -181,17 +163,16 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         val clamped = threshold.coerceIn(0.1, 1.0)
         softKneeThreshold = clamped
         if (isNativeLoaded) {
-            try { nativeSetSoftKneeThreshold(clamped) } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeSetSoftKneeThreshold(eqPtr, clamped) } catch (_: Throwable) {}
         }
     }
 
-    fun isManualPreampMode(): Boolean = manualPreampMode
+    fun isAutoPreampEnabled(): Boolean = autoPreampEnabled
 
-    fun setManualPreampMode(manual: Boolean) {
-        manualPreampMode = manual
-        updateIsFlat()
+    fun setAutoPreampEnabled(enabled: Boolean) {
+        autoPreampEnabled = enabled
         if (isNativeLoaded) {
-            try { nativeSetPreampMode(manual) } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeSetAutoPreampEnabled(eqPtr, enabled) } catch (_: Throwable) {}
         }
     }
 
@@ -202,7 +183,38 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         manualPreampDb = clamped
         updateIsFlat()
         if (isNativeLoaded) {
-            try { nativeSetManualPreamp(clamped) } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeSetManualPreamp(eqPtr, clamped) } catch (_: Throwable) {}
+        }
+    }
+
+    fun getReplayGainDb(): Double = replayGainDb
+
+    fun setReplayGainDb(db: Double) {
+        val clamped = db.coerceIn(-60.0, 24.0)
+        replayGainDb = clamped
+        updateIsFlat()
+        if (isNativeLoaded) {
+            try { NativeEqBridge.nativeSetReplayGainDb(eqPtr, clamped) } catch (_: Throwable) {}
+        }
+    }
+
+    fun syncFromPreferences() {
+        val enabled = Preferences.isEqualizerEnabled()
+        isEnabled = enabled
+        val bands: Short = NUM_BANDS.toShort()
+        val savedLevels = Preferences.getEqualizerBandLevels(bands)
+        val savedWeights = Preferences.getEqualizerBandWeights(bands)
+        for (i in 0 until NUM_BANDS) {
+            bandLevels[i] = savedLevels[i].toInt()
+            bandWeights[i] = savedWeights[i].toDouble()
+        }
+        maxAttenuationDb = Preferences.getEqualizerMaxAttenuation().toDouble()
+        softKneeThreshold = Preferences.getEqualizerSoftKneeThreshold().toDouble()
+        autoPreampEnabled = Preferences.isEqualizerAutoPreampEnabled()
+        manualPreampDb = Preferences.getEqualizerManualPreampDb().toDouble()
+        updateIsFlat()
+        if (isNativeLoaded) {
+            NativeEqBridge.syncFromPreferences(eqPtr)
         }
     }
 
@@ -224,15 +236,10 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         if (isNativeLoaded) {
             try {
                 nativeConfigure(currentSampleRate)
-                nativeSetEnabled(isEnabled)
-                for (b in 0 until NUM_BANDS) {
-                    nativeSetBand(b, bandLevels[b])
-                    nativeSetBandWeight(b, bandWeights[b])
-                }
-                nativeSetMaxAttenuation(maxAttenuationDb)
-                nativeSetSoftKneeThreshold(softKneeThreshold)
-                nativeSetPreampMode(manualPreampMode)
-                nativeSetManualPreamp(manualPreampDb)
+                NativeEqBridge.nativeApplyConfig(
+                    eqPtr, isEnabled, bandLevels, bandWeights,
+                    manualPreampDb, autoPreampEnabled, maxAttenuationDb, softKneeThreshold
+                )
             } catch (_: Throwable) {}
         }
         updateIsFlat()
@@ -245,14 +252,14 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
     override fun onFlush() {
         super.onFlush()
         if (isNativeLoaded) {
-            try { nativeReset() } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeReset(eqPtr) } catch (_: Throwable) {}
         }
     }
 
     override fun onReset() {
         super.onReset()
         if (isNativeLoaded) {
-            try { nativeReset() } catch (_: Throwable) {}
+            try { NativeEqBridge.nativeReset(eqPtr) } catch (_: Throwable) {}
         }
         isConfigured = false
     }
@@ -261,8 +268,9 @@ class EqualizerAudioProcessor private constructor() : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        if (!isEnabled || isFlat) {
-            // Fast direct pass-through when disabled or all bands are flat
+        if (isFlat) {
+            // Fast pass-through when nothing would change (preamp=0 dB and all bands=0 dB).
+            // Note: !isEnabled alone is NOT sufficient — manual preamp must still apply.
             val outputBuffer = replaceOutputBuffer(remaining)
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()

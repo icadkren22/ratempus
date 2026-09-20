@@ -18,6 +18,7 @@ import androidx.media3.extractor.metadata.id3.InternalFrame;
 import androidx.media3.extractor.metadata.id3.TextInformationFrame;
 
 import com.eddyizm.tempus.App;
+import com.eddyizm.tempus.equalizer.EqualizerDispatcher;
 import com.eddyizm.tempus.model.ReplayGain;
 import com.eddyizm.tempus.subsonic.models.ReplayGainInfo;
 
@@ -154,13 +155,13 @@ public class ReplayGainUtil {
                         // the wrong level for the rest of the track.
                         if (gain != 0f) {
                             float peak = resolvePeak(p, gains);
-                            float totalGain = computeTotalGain(gain, peak);
+                            float rgGain = computeRgDb(gain, peak);
                             Log.d(TAG, "Late prefetch for current track " + item.mediaId
-                                    + " — applying gain immediately totalGain=" + totalGain);
-                            audioProcessor.setGainImmediate(totalGain);
+                                    + " — applying gain immediately rgGain=" + rgGain);
+                            applyReplayGainDb(rgGain);
                         } else {
                             Log.d(TAG, "Late prefetch for current track " + item.mediaId
-                                    + " — empty gains, skipping setGainImmediate");
+                                    + " — empty gains, skipping applyReplayGainDb");
                         }
                     }
 
@@ -195,11 +196,11 @@ public class ReplayGainUtil {
 
             float gain = resolveGain(player, gains);
             float peak = resolvePeak(player, gains);
-            float totalGain = computeTotalGain(gain, peak);
+            float rgGain = computeRgDb(gain, peak);
             Log.d(TAG, "applyGain: server RG for " + mediaItem.mediaId
                     + " gain=" + gain + " peak=" + peak
-                    + " totalGain=" + totalGain);
-            audioProcessor.setGainImmediate(totalGain);
+                    + " rgGain=" + rgGain);
+            applyReplayGainDb(rgGain);
             queuePendingForNextTrack(player);
             return;
         }
@@ -210,19 +211,17 @@ public class ReplayGainUtil {
             float gain = resolveGain(player, gains);
             if (gain != 0f) {
                 float peak = resolvePeak(player, gains);
-                float totalGain = computeTotalGain(gain, peak);
+                float rgGain = computeRgDb(gain, peak);
                 Log.d(TAG, "applyGain: tag cache hit for " + mediaItem.mediaId
                         + " gain=" + gain + " peak=" + peak
-                        + " totalGain=" + totalGain);
-                audioProcessor.setGainImmediate(totalGain);
+                        + " rgGain=" + rgGain);
+                applyReplayGainDb(rgGain);
             } else {
                 // Cache entry exists but gain is zero: the track genuinely has
-                // no ReplayGain data. Apply preamp-only so this track plays at the
-                // correct reference level rather than inheriting the previous track's gain.
-                float preampOnly = computeTotalGain(0f, 0f);
+                // no ReplayGain data. Set RG to 0 dB.
                 Log.d(TAG, "applyGain: cache hit but gain=0 for " + mediaItem.mediaId
-                        + ", applying preamp-only totalGain=" + preampOnly);
-                audioProcessor.setGainImmediate(preampOnly);
+                        + ", setting rgGain=0");
+                applyReplayGainDb(0f);
             }
         } else {
             Log.d(TAG, "applyGain: cache miss for " + mediaItem.mediaId
@@ -294,19 +293,16 @@ public class ReplayGainUtil {
         // by applyGain() (called from onMediaItemTransition), which already
         // applied the correct preamp-only value when the track started.
         if (gain == 0f) {
-            // No RG data for this track. Apply preamp-only so the track plays at
-            // the correct reference level rather than inheriting whatever gain the
-            // previous track left behind.
-            float preampOnly = computeTotalGain(0f, 0f);
+            // No RG data for this track. Set RG to 0 dB.
             Log.d(TAG, "setReplayGain: no effective gain data for " + mediaId
-                    + ", applying preamp-only totalGain=" + preampOnly);
-            audioProcessor.setGainImmediate(preampOnly);
+                    + ", setting rgGain=0");
+            applyReplayGainDb(0f);
             queuePendingForNextTrack(player);
             return;
         }
 
         float peak = resolvePeak(player, gains);
-        audioProcessor.setGainImmediate(computeTotalGain(gain, peak));
+        applyReplayGainDb(computeRgDb(gain, peak));
 
         queuePendingForNextTrack(player);
     }
@@ -346,10 +342,10 @@ public class ReplayGainUtil {
             List<ReplayGain> gains = serverInfoToGains(serverInfo);
             float gain = resolveGain(player, gains);
             float peak = resolvePeak(player, gains);
-            float totalGain = computeTotalGain(gain, peak);
+            float rgGain = computeRgDb(gain, peak);
             Log.d(TAG, "reapplyCurrentTrackGain: server RG for " + currentItem.mediaId
-                    + " totalGain=" + totalGain);
-            audioProcessor.setGainImmediate(totalGain);
+                    + " rgGain=" + rgGain);
+            applyReplayGainDb(rgGain);
             return;
         }
 
@@ -359,10 +355,10 @@ public class ReplayGainUtil {
             float gain = resolveGain(player, cached);
             if (gain != 0f) {
                 float peak = resolvePeak(player, cached);
-                float totalGain = computeTotalGain(gain, peak);
+                float rgGain = computeRgDb(gain, peak);
                 Log.d(TAG, "reapplyCurrentTrackGain: cache hit for " + currentItem.mediaId
-                        + " totalGain=" + totalGain);
-                audioProcessor.setGainImmediate(totalGain);
+                        + " rgGain=" + rgGain);
+                applyReplayGainDb(rgGain);
                 return;
             }
             // Cache entry exists but gain is zero (empty/poisoned). Fall through
@@ -398,18 +394,15 @@ public class ReplayGainUtil {
                 return;
             }
             // gains != null but resolvedGain == 0: we have confirmed the next track
-            // has no ReplayGain data. Queue preamp-only so the gapless transition
-            // applies the correct baseline instead of inheriting the current track's
-            // gain level.
-            float preampOnly = computeTotalGain(0f, 0f);
-            audioProcessor.setPendingGain(preampOnly);
+            // has no ReplayGain data. Queue 0 dB.
+            audioProcessor.setPendingGain(0f);
             Log.d(TAG, "queuePendingForNextTrack: no RG tags for "
-                    + nextItem.mediaId + ", queuing preamp-only totalGain=" + preampOnly);
+                    + nextItem.mediaId + ", queuing 0 dB");
             return;
         }
 
-        float totalGain = computeTotalGain(resolvedGain, resolvePeakForNextTrack(player, gains));
-        audioProcessor.setPendingGain(totalGain);
+        float nextRgGain = computeRgDb(resolvedGain, resolvePeakForNextTrack(player, gains));
+        audioProcessor.setPendingGain(nextRgGain);
     }
 
     private static List<Metadata> extractMetadata(Tracks tracks) {
@@ -606,18 +599,23 @@ public class ReplayGainUtil {
                        .equals(next.mediaMetadata.albumTitle.toString());
     }
 
-    // Total gain computation (preamp + clipping prevention)
+    // ReplayGain computation (pure RG gain + clipping prevention; manual preamp is handled in native DSP)
 
-    private static float computeTotalGain(float gain, float peak) {
-        float preamp    = Preferences.getLoudnessPreamp();
-        float totalGain = gain + preamp;
+    private static float computeRgDb(float gain, float peak) {
+        if (gain == 0f) return 0f;
+        float rgGain = gain;
 
         if (Preferences.isReplayGainPreventClipping() && peak > 0f) {
             float maxGainForPeak = -(float) (20.0 * Math.log10(peak));
-            if (totalGain > maxGainForPeak) totalGain = maxGainForPeak;
+            if (rgGain > maxGainForPeak) rgGain = maxGainForPeak;
         }
 
-        return Math.max(-60f, Math.min(15f, totalGain));
+        return Math.max(-60f, Math.min(24f, rgGain));
+    }
+
+    private static void applyReplayGainDb(float rgDb) {
+        audioProcessor.setGainImmediate(rgDb);
+        EqualizerDispatcher.setReplayGainDb((double) rgDb);
     }
 
     /**

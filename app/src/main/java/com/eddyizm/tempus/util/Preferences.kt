@@ -113,12 +113,12 @@ object Preferences {
     private const val EQUALIZER_BAND_WEIGHTS = "equalizer_band_weights"
     private const val EQUALIZER_MAX_ATTENUATION = "equalizer_max_attenuation"
     private const val EQUALIZER_SOFT_KNEE_THRESHOLD = "equalizer_soft_knee_threshold"
-    private const val EQUALIZER_MANUAL_PREAMP_MODE = "equalizer_manual_preamp_mode"
+    private const val EQUALIZER_AUTO_PREAMP_ENABLED = "equalizer_auto_preamp_enabled"
     private const val EQUALIZER_MANUAL_PREAMP_DB = "equalizer_manual_preamp_db"
     val DEFAULT_BAND_WEIGHTS = floatArrayOf(0.40f, 0.60f, 0.65f, 0.60f, 0.40f)
     const val DEFAULT_MAX_ATTENUATION = 8.0f
     const val DEFAULT_SOFT_KNEE_THRESHOLD = 0.70f
-    const val DEFAULT_MANUAL_PREAMP_MODE = false
+    const val DEFAULT_AUTO_PREAMP_ENABLED = true
     const val DEFAULT_MANUAL_PREAMP_DB = 0.0f
     private const val MINI_SHUFFLE_BUTTON_VISIBILITY = "mini_shuffle_button_visibility"
     private const val CUSTOM_COMMAND_FIRST_BUTTON = "custom_command_first_button"
@@ -762,12 +762,12 @@ object Preferences {
 
     @JvmStatic
     fun getLoudnessPreamp(): Float {
-        return App.getInstance().preferences.getInt(LOUDNESS_PREAMP, 0).toFloat()
+        return getEqualizerManualPreampDb()
     }
 
     @JvmStatic
     fun setLoudnessPreamp(value: Float) {
-        App.getInstance().preferences.edit().putInt(LOUDNESS_PREAMP, value.toInt()).apply()
+        setEqualizerManualPreampDb(value)
     }
 
     @JvmStatic
@@ -1067,17 +1067,21 @@ object Preferences {
         return App.getInstance().preferences.getFloat(EQUALIZER_SOFT_KNEE_THRESHOLD, DEFAULT_SOFT_KNEE_THRESHOLD)
     }
 
-    fun setEqualizerManualPreampMode(manual: Boolean) {
-        App.getInstance().preferences.edit().putBoolean(EQUALIZER_MANUAL_PREAMP_MODE, manual).apply()
+    fun setEqualizerAutoPreampEnabled(enabled: Boolean) {
+        App.getInstance().preferences.edit().putBoolean(EQUALIZER_AUTO_PREAMP_ENABLED, enabled).apply()
     }
 
     @JvmStatic
-    fun isEqualizerManualPreampMode(): Boolean {
-        return App.getInstance().preferences.getBoolean(EQUALIZER_MANUAL_PREAMP_MODE, DEFAULT_MANUAL_PREAMP_MODE)
+    fun isEqualizerAutoPreampEnabled(): Boolean {
+        return App.getInstance().preferences.getBoolean(EQUALIZER_AUTO_PREAMP_ENABLED, DEFAULT_AUTO_PREAMP_ENABLED)
     }
 
+    @JvmStatic
     fun setEqualizerManualPreampDb(db: Float) {
-        App.getInstance().preferences.edit().putFloat(EQUALIZER_MANUAL_PREAMP_DB, db).apply()
+        App.getInstance().preferences.edit()
+            .putFloat(EQUALIZER_MANUAL_PREAMP_DB, db)
+            .putInt(LOUDNESS_PREAMP, kotlin.math.round(db).toInt())
+            .apply()
     }
 
     @JvmStatic

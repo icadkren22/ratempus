@@ -88,89 +88,31 @@ class NativeDirectAudioTrack(
         external fun nativeGetBitDepth(handle: Long): Int
 
         @JvmStatic
-        external fun nativeSetEqEnabled(handle: Long, enabled: Boolean)
-
-        @JvmStatic
-        external fun nativeSetEqBand(handle: Long, band: Int, levelMb: Int)
-
-        @JvmStatic
-        external fun nativeSetEqBandWeight(handle: Long, band: Int, weight: Double)
-
-        @JvmStatic
-        external fun nativeSetEqMaxAttenuation(handle: Long, attenDb: Double)
-
-        @JvmStatic
-        external fun nativeSetEqSoftKneeThreshold(handle: Long, threshold: Double)
-
-        @JvmStatic
-        external fun nativeSetEqPreampMode(handle: Long, manual: Boolean)
-
-        @JvmStatic
-        external fun nativeSetEqManualPreamp(handle: Long, db: Double)
+        external fun nativeGetEqPtr(handle: Long): Long
 
         @Volatile
         private var activeTrack: NativeDirectAudioTrack? = null
 
         @JvmStatic
         fun getActiveTrack(): NativeDirectAudioTrack? = activeTrack
-
-        @JvmStatic
-        fun setNativeEqEnabled(enabled: Boolean) {
-            activeTrack?.let { if (it.isValid) nativeSetEqEnabled(it.nativeHandle, enabled) }
-        }
-
-        @JvmStatic
-        fun setNativeEqBand(band: Int, levelMb: Int) {
-            activeTrack?.let { if (it.isValid) nativeSetEqBand(it.nativeHandle, band, levelMb) }
-        }
-
-        @JvmStatic
-        fun setNativeEqBandWeight(band: Int, weight: Double) {
-            activeTrack?.let { if (it.isValid) nativeSetEqBandWeight(it.nativeHandle, band, weight) }
-        }
-
-        @JvmStatic
-        fun setNativeEqMaxAttenuation(attenDb: Double) {
-            activeTrack?.let { if (it.isValid) nativeSetEqMaxAttenuation(it.nativeHandle, attenDb) }
-        }
-
-        @JvmStatic
-        fun setNativeEqSoftKneeThreshold(threshold: Double) {
-            activeTrack?.let { if (it.isValid) nativeSetEqSoftKneeThreshold(it.nativeHandle, threshold) }
-        }
-
-        @JvmStatic
-        fun setNativeEqPreampMode(manual: Boolean) {
-            activeTrack?.let { if (it.isValid) nativeSetEqPreampMode(it.nativeHandle, manual) }
-        }
-
-        @JvmStatic
-        fun setNativeEqManualPreamp(db: Double) {
-            activeTrack?.let { if (it.isValid) nativeSetEqManualPreamp(it.nativeHandle, db) }
-        }
     }
 
     private var nativeHandle: Long = 0L
+
+    val eqPtr: Long get() = if (isValid) nativeGetEqPtr(nativeHandle) else 0L
 
     init {
         if (isSupported()) {
             nativeHandle = nativeCreate(sampleRate, channelCount, encoding, bufferCapacityFrames)
             if (isValid) {
                 activeTrack = this
-                val enabled = Preferences.isEqualizerEnabled()
-                nativeSetEqEnabled(nativeHandle, enabled)
-                val savedLevels = Preferences.getEqualizerBandLevels(5)
-                val savedWeights = Preferences.getEqualizerBandWeights(5)
-                for (i in 0 until 5) {
-                    nativeSetEqBand(nativeHandle, i, savedLevels[i].toInt())
-                    nativeSetEqBandWeight(nativeHandle, i, savedWeights[i].toDouble())
-                }
-                nativeSetEqMaxAttenuation(nativeHandle, Preferences.getEqualizerMaxAttenuation().toDouble())
-                nativeSetEqSoftKneeThreshold(nativeHandle, Preferences.getEqualizerSoftKneeThreshold().toDouble())
-                nativeSetEqPreampMode(nativeHandle, Preferences.isEqualizerManualPreampMode())
-                nativeSetEqManualPreamp(nativeHandle, Preferences.getEqualizerManualPreampDb().toDouble())
+                syncEqFromPreferences()
             }
         }
+    }
+
+    fun syncEqFromPreferences() {
+        if (isValid) com.eddyizm.tempus.equalizer.NativeEqBridge.syncFromPreferences(eqPtr)
     }
 
     val isValid: Boolean get() = nativeHandle != 0L

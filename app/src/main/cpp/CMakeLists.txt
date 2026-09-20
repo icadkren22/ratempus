@@ -4,6 +4,7 @@ project("directaudio")
 add_library(
     directaudio
     SHARED
+    dsp_eq_jni.cpp
     direct_audio_jni.cpp
     usb_exclusive_output.cpp
 )
